@@ -22,6 +22,31 @@ DOWNLOAD_DIR="${1:-$HOME/datasets/cifar10}"
 echo "Downloading CIFAR-10 to: ${DOWNLOAD_DIR}"
 
 cd ../ || exit
+
+# Initialize conda if CONDA_SHELL not set
+if [ -z "${CONDA_SHELL}" ]; then
+    # Try common conda initialization paths
+    if [ -f "${HOME}/.bashrc" ]; then
+        export CONDA_SHELL="${HOME}/.bashrc"
+    elif [ -f "${HOME}/.bash_profile" ]; then
+        export CONDA_SHELL="${HOME}/.bash_profile"
+    elif [ -f "/etc/profile.d/conda.sh" ]; then
+        export CONDA_SHELL="/etc/profile.d/conda.sh"
+    elif [ -n "${CONDA_EXE}" ]; then
+        # If conda is available, find conda.sh relative to it
+        CONDA_BASE=$(dirname $(dirname ${CONDA_EXE}))
+        export CONDA_SHELL="${CONDA_BASE}/etc/profile.d/conda.sh"
+    fi
+fi
+
+# Create conda environment if it doesn't exist
+if command -v conda &> /dev/null; then
+    if ! conda env list | grep -q "^discdiff "; then
+        echo "Creating discdiff conda environment..."
+        conda env create -f requirements.yaml
+    fi
+fi
+
 source setup_env.sh
 
 python -c "
