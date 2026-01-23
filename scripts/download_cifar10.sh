@@ -1,18 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=download_cifar10
 #SBATCH --account=3261535
-#SBATCH --partition=gpu
-#SBATCH --gpus=1
+#SBATCH --partition=defq
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64gb
+#SBATCH --mem=16gb
 #SBATCH --ntasks=1
+#SBATCH --time=02:00:00
 #SBATCH --output=out/%x_%j.out
 #SBATCH --error=err/%x_%j.err
 #SBATCH --mail-type=all
 #SBATCH --mail-user=3261535@phd.unibocconi.it
-#SBATCH -o ../watch_folder/%x_%j.out
-#SBATCH -N 1
-#SBATCH --get-user-env
 
 # Download CIFAR-10 dataset
 # Usage: sbatch download_cifar10.sh
