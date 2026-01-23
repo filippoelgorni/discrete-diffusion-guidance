@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=download_cifar10
 #SBATCH --account=3261535
-#SBATCH --partition=defq
+#SBATCH --partition=debug_gpunew
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16gb
 #SBATCH --ntasks=1
