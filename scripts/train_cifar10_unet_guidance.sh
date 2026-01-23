@@ -1,17 +1,19 @@
 #!/bin/bash
-#SBATCH -o ../watch_folder/%x_%j.out  # output file (%j expands to jobID)
-#SBATCH -N 1                          # Total number of nodes requested
-#SBATCH --get-user-env                # retrieve the users login environment
-#SBATCH --mem=64000                   # server memory requested (per node)
-#SBATCH -t 960:00:00                  # Time limit (hh:mm:ss)
-#SBATCH --constraint="[a100|a6000|a5000|3090]"
-#SBATCH --ntasks-per-node=4
-#SBATCH --gres=gpu:4                  # Type/number of GPUs needed
-#SBATCH --open-mode=append            # Do not overwrite logs
-#SBATCH --requeue                     # Requeue upon preemption
+#SBATCH --job-name=train_cifar10
+#SBATCH --account=3261535
+#SBATCH --partition=gpunew
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16gb
+#SBATCH --ntasks=1
+#SBATCH --nodes=1
+#SBATCH --gpus=1
+#SBATCH --output=out/%x_%j.out
+#SBATCH --error=err/%x_%j.err
+#SBATCH --mail-type=all
+#SBATCH --mail-user=3261535@phd.unibocconi.it
 
 # NOTE: Need to set the (local) dataset path for downloaded cifar-10 data
-DATASET_PATH="<path_to_datasets>"
+DATASET_PATH=${HOME}/discrete-diffusion-guidance/data/cifar10
 
 <<comment
 #  Usage:
