@@ -14,8 +14,8 @@ dependencies:
   - pytorch
   - pytorch-cuda=12.1
   - torchvision
-  - triton
   - pip:
+      - triton==2.0.3
       - causal-conv1d==1.4.0
       - flash-attn==2.7.2.post1
       - mamba-ssm==1.2.0.post1
