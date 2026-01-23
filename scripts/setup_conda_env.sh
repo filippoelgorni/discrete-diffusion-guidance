@@ -21,6 +21,17 @@ if [ -f "${HOME}/.bashrc" ]; then
     source "${HOME}/.bashrc"
 fi
 
+# Remove existing environment
+echo "Removing existing discdiff environment..."
+conda env remove -n discdiff -y 2>/dev/null || true
+
+# Aggressively clean conda cache
+echo "Cleaning conda cache..."
+conda clean --all -y
+conda clean --force-pkgs-dirs -y
+rm -rf ${HOME}/miniconda3/pkgs/pytorch-* 2>/dev/null || true
+rm -rf ${HOME}/.conda/pkgs/pytorch-* 2>/dev/null || true
+
 # Create conda environment from requirements.yaml
 conda env create -f requirements.yaml
 
