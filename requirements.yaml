@@ -11,17 +11,12 @@ dependencies:
   - ipywidgets=8.1.2
   - pip=23.3.1
   - python=3.9.20
-  - pytorch
-  - pytorch-cuda=12.1
-  - torchvision
   - pip:
-      - triton==2.2.0
-      - causal-conv1d==1.4.0
-      - flash-attn==2.7.2.post1
-      - mamba-ssm==1.2.0.post1
       - biopython==1.84
+      - causal-conv1d==1.4.0
       - datasets==2.18.0
       - einops==0.8.0
+      - flash-attn==2.7.2.post1
       - fsspec==2024.2.0
       - git-lfs==1.6
       - h5py==3.10.0
@@ -32,6 +27,7 @@ dependencies:
       - jupyterlab==4.1.8
       - lightning==2.2.1
       - lightning-utilities==0.11.9
+      - mamba-ssm==1.2.0.post1
       - matplotlib==3.9.2
       - notebook==7.1.1
       - numpy==1.26.4
@@ -47,7 +43,10 @@ dependencies:
       - seaborn==0.13.2
       - timm==0.9.16
       - tokenizers==0.15.2
+      - torch==2.2.2
       - torchmetrics==1.6.0
+      - torchvision==0.17.2
       - tqdm==4.67.0
       - transformers==4.38.2
+      - triton==2.2.0
       - wandb==0.13.5
