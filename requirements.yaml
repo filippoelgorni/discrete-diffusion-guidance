@@ -11,16 +11,13 @@ dependencies:
   - ipywidgets=8.1.2
   - pip=23.3.1
   - python=3.9.20
+  - pytorch::torch=2.2.2
+  - pytorch::torchvision=0.17.2
+  - pytorch::triton=2.2.0
   - pip:
-      # Install torch first (required for building other packages)
-      - torch==2.2.2
-      - torchvision==0.17.2
-      - triton==2.2.0
-      # Packages that require torch during setup
       - causal-conv1d==1.4.0
       - flash-attn==2.7.2.post1
       - mamba-ssm==1.2.0.post1
-      # Other dependencies
       - biopython==1.84
       - datasets==2.18.0
       - einops==0.8.0
