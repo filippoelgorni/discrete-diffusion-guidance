@@ -38,7 +38,8 @@ if [ -z "${MODEL}" ]; then
   exit 1
 fi
 
-RUN_NAME="${MODEL}"
+RUN_NAME="${SLURM_JOB_NAME}"
+
 T=0
 if [ "${MODEL}" = "mdlm" ]; then
   PARAMETERIZATION=subs
