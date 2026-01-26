@@ -61,6 +61,9 @@ fi
 # Examples: 0.1 (10%), 0.01 (1%), or 1.0 (100% - full dataset)
 SUBSET_FRACTION=${SUBSET_FRACTION:-1.0}
 
+# Optional: Set MAX_STEPS to train for more/fewer steps (default: 300000)
+MAX_STEPS=${MAX_STEPS:-300000}
+
 # To enable preemption re-loading, set `hydra.run.dir` or
 srun python -u -m main \
   is_vision=True \
@@ -80,7 +83,7 @@ srun python -u -m main \
   lr_scheduler=constant_warmup \
   lr_scheduler.num_warmup_steps=5000 \
   callbacks.checkpoint_every_n_steps.every_n_train_steps=10_000 \
-  trainer.max_steps=300_000 \
+  trainer.max_steps=${MAX_STEPS} \
   trainer.val_check_interval=10_000 \
   +trainer.check_val_every_n_epoch=null \
   trainer.limit_train_batches=${SUBSET_FRACTION} \
