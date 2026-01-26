@@ -57,6 +57,10 @@ else
   exit 1
 fi
 
+# Optional: Set SUBSET_FRACTION to use only a portion of the dataset
+# Examples: 0.1 (10%), 0.01 (1%), or 1.0 (100% - full dataset)
+SUBSET_FRACTION=${SUBSET_FRACTION:-1.0}
+
 # To enable preemption re-loading, set `hydra.run.dir` or
 srun python -u -m main \
   is_vision=True \
@@ -79,6 +83,8 @@ srun python -u -m main \
   trainer.max_steps=300_000 \
   trainer.val_check_interval=10_000 \
   +trainer.check_val_every_n_epoch=null \
+  trainer.limit_train_batches=${SUBSET_FRACTION} \
+  trainer.limit_val_batches=${SUBSET_FRACTION} \
   training.guidance.cond_dropout=0.1 \
   eval.generate_samples=True \
   sampling.num_sample_batches=1 \
