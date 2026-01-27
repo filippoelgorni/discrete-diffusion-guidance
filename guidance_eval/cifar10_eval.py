@@ -161,9 +161,9 @@ def save_images(
         # Convert to PIL
         # Handle both [0, 1] and [0, 255] ranges
         if img.max() <= 1.0:
-            img_np = (img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+            img_np = (img.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
         else:
-            img_np = img.permute(1, 2, 0).numpy().astype(np.uint8)
+            img_np = img.cpu().permute(1, 2, 0).numpy().astype(np.uint8)
         
         pil_img = Image.fromarray(img_np)
         
@@ -277,9 +277,9 @@ def main(args):
         # Save nearest neighbor image to appropriate directory
         # Handle both [0, 1] and [0, 255] ranges
         if nn_img.max() <= 1.0:
-            nn_img_np = (nn_img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+            nn_img_np = (nn_img.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
         else:
-            nn_img_np = nn_img.permute(1, 2, 0).numpy().astype(np.uint8)
+            nn_img_np = nn_img.cpu().permute(1, 2, 0).numpy().astype(np.uint8)
         
         nn_pil = Image.fromarray(nn_img_np)
         
