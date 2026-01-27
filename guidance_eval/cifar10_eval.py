@@ -8,7 +8,7 @@ Computes:
 A sample is considered memorized if:
   ||x - a^μ1||_2 / ||x - a^μ2||_2 < k
 where a^μ1 is the nearest neighbor, a^μ2 is the 2nd nearest neighbor,
-and k is a threshold (default 0.5).
+and k is a threshold (default 1/3).
 """
 
 import argparse
@@ -49,7 +49,7 @@ def generate_samples(
     num_samples: int,
     batch_size: int = 64,
 ) -> torch.Tensor:
-    """Generate samples from the diffusion model."""
+    """Generate samples from the diffusion model using same procedure as training."""
     model.eval()
     samples = []
     num_batches = (num_samples + batch_size - 1) // batch_size
@@ -58,13 +58,14 @@ def generate_samples(
         current_batch_size = min(batch_size, num_samples - len(samples) * batch_size if samples else batch_size)
         model.config.sampling.batch_size = current_batch_size
         
+        # Use the same sampling procedure as training validation
         with torch.no_grad():
             sample = model.sample()
-            # Decode: (B, C*H*W) -> (B, C, H, W)
+            # batch_decode returns already decoded images
             decoded = model.tokenizer.batch_decode(sample)
-            # Normalize to [0, 1]
-            decoded = decoded.float() / 255.0
-            samples.append(decoded.cpu())
+            # The decoded output is already in the right format
+            # Just move to CPU and add to list
+            samples.append(decoded.float().cpu())
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
     return all_samples
@@ -84,7 +85,7 @@ def compute_memorization(
     Args:
         generated: Generated samples (N, C, H, W)
         train_images: Training images (M, C, H, W)
-        k: Threshold for memorization (default 0.5)
+        k: Threshold for memorization (default 1/3)
     
     Returns:
         f_mem: Fraction of memorized samples
@@ -142,7 +143,7 @@ def save_images(
     """Save images to disk.
     
     Args:
-        images: Tensor of images (N, C, H, W)
+        images: Tensor of images (N, C, H, W) in range [0, 1] or [0, 255]
         save_dir: Directory to save images
         prefix: Prefix for filenames
         indices: Optional list of original indices (for naming)
@@ -158,7 +159,12 @@ def save_images(
         idx = indices[i] if indices is not None else i
         
         # Convert to PIL
-        img_np = (img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        # Handle both [0, 1] and [0, 255] ranges
+        if img.max() <= 1.0:
+            img_np = (img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        else:
+            img_np = img.permute(1, 2, 0).numpy().astype(np.uint8)
+        
         pil_img = Image.fromarray(img_np)
         
         path = os.path.join(save_dir, f"{prefix}_{idx:05d}.png")
@@ -166,6 +172,39 @@ def save_images(
         paths.append(path)
     
     return paths
+
+
+def save_train_images_sample(
+    images: torch.Tensor,
+    save_dir: str,
+    max_images: int = 5000,
+) -> str:
+    """Save training image sample for FID reference.
+    
+    Args:
+        images: Training images (N, C, H, W)
+        save_dir: Directory to save images
+        max_images: Maximum number of training images to save
+    
+    Returns:
+        Path to the directory with saved training images
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    
+    for i, img in enumerate(tqdm(images[:max_images], desc="Saving training image sample")):
+        # Convert to PIL
+        # Handle both [0, 1] and [0, 255] ranges
+        if img.max() <= 1.0:
+            img_np = (img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        else:
+            img_np = img.permute(1, 2, 0).numpy().astype(np.uint8)
+        
+        pil_img = Image.fromarray(img_np)
+        
+        path = os.path.join(save_dir, f"train_{i:05d}.png")
+        pil_img.save(path)
+    
+    return save_dir
 
 
 def main(args):
@@ -249,14 +288,16 @@ def main(args):
         for i, idx in enumerate(non_memorized_indices):
             all_gen_paths[idx] = non_mem_paths[i]
     
-    # Compute FID using CIFAR-10 pre-computed statistics
+    # Compute FID using generated images and training images
     print("\n=== Computing FID ===")
-    # FID needs all images in one directory, so use the parent gen_images_dir
-    # But images are in subdirs, so we need to compute from both
+    # Save a sample of training images for FID reference
+    train_ref_dir = os.path.join(eval_dir, "train_ref_sample")
+    save_train_images_sample(train_images, train_ref_dir, max_images=5000)
+    
+    # Compute FID from both directories
     fid_score = get_fid_from_directory(
         gen_images_dir,
-        dataset_name='cifar10',
-        dataset_split='train',
+        fid_ref=train_ref_dir,
     )
     print(f"FID: {fid_score:.4f}")
     
@@ -278,7 +319,12 @@ def main(args):
         sample_is_memorized = ratio < args.mem_threshold
         
         # Save nearest neighbor image to appropriate directory
-        nn_img_np = (nn_img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        # Handle both [0, 1] and [0, 255] ranges
+        if nn_img.max() <= 1.0:
+            nn_img_np = (nn_img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        else:
+            nn_img_np = nn_img.permute(1, 2, 0).numpy().astype(np.uint8)
+        
         nn_pil = Image.fromarray(nn_img_np)
         
         if sample_is_memorized:
@@ -358,7 +404,7 @@ if __name__ == "__main__":
                         help="Batch size for generation")
     parser.add_argument("--sampling-steps", type=int, default=128,
                         help="Number of sampling steps")
-    parser.add_argument("--mem-threshold", type=float, default=0.5,
+    parser.add_argument("--mem-threshold", type=float, default=1/3,
                         help="Threshold k for memorization detection")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")

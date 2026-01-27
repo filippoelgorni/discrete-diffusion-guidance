@@ -33,7 +33,7 @@
 #   NUM_SAMPLES    - Number of samples to generate (default: 10000)
 #   BATCH_SIZE     - Batch size for generation (default: 64)
 #   SAMPLING_STEPS - Number of diffusion sampling steps (default: 128)
-#   MEM_THRESHOLD  - Memorization threshold k (default: 0.5)
+#   MEM_THRESHOLD  - Memorization threshold k (default: 1/3)
 #   SEED           - Random seed (default: 42)
 # ============================================================================
 
@@ -58,7 +58,7 @@ EVAL_STEP=${EVAL_STEP:-final}
 NUM_SAMPLES=${NUM_SAMPLES:-10000}
 BATCH_SIZE=${BATCH_SIZE:-64}
 SAMPLING_STEPS=${SAMPLING_STEPS:-128}
-MEM_THRESHOLD=${MEM_THRESHOLD:-0.5}
+MEM_THRESHOLD=${MEM_THRESHOLD:-0.3333}
 SEED=${SEED:-42}
 
 echo "=============================================="
