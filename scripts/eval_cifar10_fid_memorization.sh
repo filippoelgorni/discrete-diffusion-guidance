@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=eval_cifar10
 #SBATCH --account=3261535
-#SBATCH --partition=gpunew
+#SBATCH --partition=medium_gpunew
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32gb
 #SBATCH --ntasks=1
@@ -58,7 +58,7 @@ EVAL_STEP=${EVAL_STEP:-final}
 NUM_SAMPLES=${NUM_SAMPLES:-10000}
 BATCH_SIZE=${BATCH_SIZE:-64}
 SAMPLING_STEPS=${SAMPLING_STEPS:-128}
-MEM_THRESHOLD=${MEM_THRESHOLD:-0.3333}
+MEM_THRESHOLD=${MEM_THRESHOLD:-0.333333}
 SEED=${SEED:-42}
 
 echo "=============================================="
