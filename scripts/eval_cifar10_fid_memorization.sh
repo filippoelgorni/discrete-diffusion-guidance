@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=eval_cifar10
 #SBATCH --account=3261535
-#SBATCH --partition=medium_gpunew
+#SBATCH --partition=gpunew
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32gb
 #SBATCH --ntasks=1
