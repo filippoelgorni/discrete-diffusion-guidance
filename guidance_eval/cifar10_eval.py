@@ -1,7 +1,6 @@
 """CIFAR-10 Evaluation Script.
 
 Computes:
-- FID (Fréchet Inception Distance)
 - Memorization metric f_mem (percentage of memorized samples)
 - Nearest neighbor analysis
 
@@ -23,7 +22,6 @@ import omegaconf
 import torch
 import torchvision
 from PIL import Image
-from pytorch_image_generation_metrics import get_fid_from_directory, get_inception_features
 from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
@@ -134,50 +132,6 @@ def compute_memorization(
     return f_mem, nearest_indices, memorization_ratios
 
 
-def compute_and_save_reference_fid_stats(
-    train_images: torch.Tensor,
-    eval_dir: str,
-) -> str:
-    """
-    Compute FID statistics from training images and save as .npy file.
-    
-    Args:
-        train_images: Training images (N, C, H, W) in [0, 1] range
-        eval_dir: Directory to save statistics
-    
-    Returns:
-        Path to saved .npy file
-    """
-    stats_path = os.path.join(eval_dir, "train_fid_stats.npz")
-    
-    if os.path.exists(stats_path):
-        print(f"Using cached FID statistics from {stats_path}")
-        return stats_path
-    
-    print("Computing FID statistics from training images...")
-    
-    # Convert images to [0, 255] range if needed
-    if train_images.max() <= 1.0:
-        train_images_uint8 = (train_images * 255).to(torch.uint8)
-    else:
-        train_images_uint8 = train_images.to(torch.uint8)
-    
-    # Compute inception features
-    features = get_inception_features(
-        train_images_uint8,
-        use_torch=True,
-        batch_size=64,
-    )
-    
-    # Compute mean and cov
-    mu = np.mean(features, axis=0)
-    cov = np.cov(features, rowvar=False)
-    
-    # Save as npz
-    np.savez(stats_path, mu=mu, sigma=cov)
-    print(f"Saved FID statistics to {stats_path}")
-    
-    return stats_path
 
 
 def save_images(
@@ -220,37 +174,6 @@ def save_images(
     return paths
 
 
-def save_train_images_sample(
-    images: torch.Tensor,
-    save_dir: str,
-    max_images: int = 5000,
-) -> str:
-    """Save training image sample for FID reference.
-    
-    Args:
-        images: Training images (N, C, H, W)
-        save_dir: Directory to save images
-        max_images: Maximum number of training images to save
-    
-    Returns:
-        Path to the directory with saved training images
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    
-    for i, img in enumerate(tqdm(images[:max_images], desc="Saving training image sample")):
-        # Convert to PIL
-        # Handle both [0, 1] and [0, 255] ranges
-        if img.max() <= 1.0:
-            img_np = (img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-        else:
-            img_np = img.permute(1, 2, 0).numpy().astype(np.uint8)
-        
-        pil_img = Image.fromarray(img_np)
-        
-        path = os.path.join(save_dir, f"train_{i:05d}.png")
-        pil_img.save(path)
-    
-    return save_dir
 
 
 def main(args):
@@ -334,18 +257,6 @@ def main(args):
         for i, idx in enumerate(non_memorized_indices):
             all_gen_paths[idx] = non_mem_paths[i]
     
-    # Compute FID using generated images and training images
-    print("\n=== Computing FID ===")
-    # Compute and save reference FID statistics from training set
-    fid_stats_path = compute_and_save_reference_fid_stats(train_images, eval_dir)
-    
-    # Compute FID from generated images against training statistics
-    fid_score = get_fid_from_directory(
-        gen_images_dir,
-        fid_ref=fid_stats_path,
-    )
-    print(f"FID: {fid_score:.4f}")
-    
     # Save nearest neighbor info and images
     print("\n=== Saving nearest neighbor images ===")
     nn_images_dir = os.path.join(eval_dir, "nearest_neighbors")
@@ -399,7 +310,6 @@ def main(args):
         "sampling_steps": args.sampling_steps,
         "seed": args.seed,
         "metrics": {
-            "fid": float(fid_score),
             "f_mem": float(f_mem),
             "f_mem_percent": float(f_mem * 100),
             "memorization_threshold_k": args.mem_threshold,
@@ -422,7 +332,6 @@ def main(args):
     print(f"Run: {args.run_name}")
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Num samples: {args.num_samples}")
-    print(f"FID: {fid_score:.4f}")
     print(f"Memorization (f_mem): {f_mem*100:.2f}%")
     print(f"Memorized samples: {results['metrics']['num_memorized']}/{args.num_samples}")
     print("=" * 50)

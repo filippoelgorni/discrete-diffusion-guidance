@@ -14,9 +14,9 @@
 #SBATCH --mail-user=3261535@phd.unibocconi.it
 
 # ============================================================================
-# CIFAR-10 Evaluation Script
+# CIFAR-10 Memorization Evaluation Script
 # ============================================================================
-# Computes FID and memorization metrics for a trained model.
+# Computes memorization metrics for a trained model.
 #
 # Usage:
 #   cd scripts/
@@ -88,7 +88,5 @@ srun python -u guidance_eval/cifar10_eval.py \
   --mem-threshold "${MEM_THRESHOLD}" \
   --seed "${SEED}"
 
-echo "=============================================="
-echo "Evaluation complete!"
-echo "Results saved to: outputs/cifar10/${RUN_NAME}/eval_step${EVAL_STEP}/"
-echo "=============================================="
+# Evaluation complete!
+# Results saved to: outputs/cifar10/${RUN_NAME}/eval_step${EVAL_STEP}/
