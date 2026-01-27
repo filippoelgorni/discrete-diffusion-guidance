@@ -62,8 +62,8 @@ def generate_samples(
             sample_tokens = model.sample()
             # batch_decode converts tokens to images
             decoded = model.tokenizer.batch_decode(sample_tokens)
-            # decoded is already in [0, 1] range and on CPU
-            samples.append(decoded)
+            # Match training code: just convert to float (keeps [0, 255] range)
+            samples.append(decoded.float())
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
     return all_samples
