@@ -23,7 +23,7 @@ import omegaconf
 import torch
 import torchvision
 from PIL import Image
-from pytorch_image_generation_metrics import get_fid_from_directory
+from pytorch_image_generation_metrics import get_fid_from_directory, get_inception_features
 from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
@@ -60,12 +60,12 @@ def generate_samples(
         
         # Use the same sampling procedure as training validation
         with torch.no_grad():
-            sample = model.sample()
-            # batch_decode returns already decoded images
-            decoded = model.tokenizer.batch_decode(sample)
-            # The decoded output is already in the right format
-            # Just move to CPU and add to list
-            samples.append(decoded.float().cpu())
+            # model.sample() returns raw tokens, need to decode them
+            sample_tokens = model.sample()
+            # batch_decode converts tokens to images
+            decoded = model.tokenizer.batch_decode(sample_tokens)
+            # decoded is already in [0, 1] range and on CPU
+            samples.append(decoded)
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
     return all_samples
@@ -132,6 +132,52 @@ def compute_memorization(
     f_mem = memorized.sum() / len(memorized)
     
     return f_mem, nearest_indices, memorization_ratios
+
+
+def compute_and_save_reference_fid_stats(
+    train_images: torch.Tensor,
+    eval_dir: str,
+) -> str:
+    """
+    Compute FID statistics from training images and save as .npy file.
+    
+    Args:
+        train_images: Training images (N, C, H, W) in [0, 1] range
+        eval_dir: Directory to save statistics
+    
+    Returns:
+        Path to saved .npy file
+    """
+    stats_path = os.path.join(eval_dir, "train_fid_stats.npz")
+    
+    if os.path.exists(stats_path):
+        print(f"Using cached FID statistics from {stats_path}")
+        return stats_path
+    
+    print("Computing FID statistics from training images...")
+    
+    # Convert images to [0, 255] range if needed
+    if train_images.max() <= 1.0:
+        train_images_uint8 = (train_images * 255).to(torch.uint8)
+    else:
+        train_images_uint8 = train_images.to(torch.uint8)
+    
+    # Compute inception features
+    features = get_inception_features(
+        train_images_uint8,
+        use_torch=True,
+        batch_size=64,
+    )
+    
+    # Compute mean and cov
+    mu = np.mean(features, axis=0)
+    cov = np.cov(features, rowvar=False)
+    
+    # Save as npz
+    np.savez(stats_path, mu=mu, sigma=cov)
+    print(f"Saved FID statistics to {stats_path}")
+    
+    return stats_path
 
 
 def save_images(
@@ -290,14 +336,13 @@ def main(args):
     
     # Compute FID using generated images and training images
     print("\n=== Computing FID ===")
-    # Save a sample of training images for FID reference
-    train_ref_dir = os.path.join(eval_dir, "train_ref_sample")
-    save_train_images_sample(train_images, train_ref_dir, max_images=5000)
+    # Compute and save reference FID statistics from training set
+    fid_stats_path = compute_and_save_reference_fid_stats(train_images, eval_dir)
     
-    # Compute FID from both directories
+    # Compute FID from generated images against training statistics
     fid_score = get_fid_from_directory(
         gen_images_dir,
-        fid_ref=train_ref_dir,
+        fid_ref=fid_stats_path,
     )
     print(f"FID: {fid_score:.4f}")
     
