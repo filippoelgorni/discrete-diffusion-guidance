@@ -91,8 +91,8 @@ def compute_memorization(
         memorization_ratios: Ratio for each sample
     """
     # Flatten images
-    gen_flat = generated.view(generated.shape[0], -1).numpy()
-    train_flat = train_images.view(train_images.shape[0], -1).numpy()
+    gen_flat = generated.cpu().view(generated.shape[0], -1).numpy()
+    train_flat = train_images.cpu().view(train_images.shape[0], -1).numpy()
     
     print("Computing pairwise distances...")
     # Compute L2 distances (this can be memory intensive)
