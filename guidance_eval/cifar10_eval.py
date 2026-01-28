@@ -59,11 +59,21 @@ def generate_samples(
         
         with torch.no_grad():
             raw_sample = model.sample()
-            print(f"  Batch {i}: raw tokens - min={raw_sample.float().min():.2f}, max={raw_sample.float().max():.2f}, mean={raw_sample.float().mean():.2f}")
+            print(f"\n[Batch {i}] RAW SAMPLE (before batch_decode):")
+            print(f"  Shape: {raw_sample.shape}, dtype: {raw_sample.dtype}")
+            print(f"  Min: {raw_sample.float().min():.4f}, Max: {raw_sample.float().max():.4f}, Mean: {raw_sample.float().mean():.4f}")
+            print(f"  Unique values (first 10): {torch.unique(raw_sample)[:10]}")
+            
             decoded = model.tokenizer.batch_decode(raw_sample).float()
+            print(f"[Batch {i}] AFTER batch_decode:")
+            print(f"  Shape: {decoded.shape}, dtype: {decoded.dtype}")
+            print(f"  Min: {decoded.min():.4f}, Max: {decoded.max():.4f}, Mean: {decoded.mean():.4f}")
+            
             # Clip to valid pixel range [0, 255] to remove special tokens
             decoded = torch.clamp(decoded, 0, 255)
-            print(f"  Batch {i}: decoded (clipped) - min={decoded.min():.2f}, max={decoded.max():.2f}, mean={decoded.mean():.2f}")
+            print(f"[Batch {i}] AFTER clamp(0, 255):")
+            print(f"  Min: {decoded.min():.4f}, Max: {decoded.max():.4f}, Mean: {decoded.mean():.4f}")
+            
             samples.append(decoded)
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
@@ -170,9 +180,23 @@ def save_images(
     for i, img in enumerate(tqdm(images, desc=f"Saving {prefix} images")):
         idx = indices[i] if indices is not None else i
         
+        print(f"\n[{prefix}_{idx:05d}] BEFORE uint8 conversion:")
+        print(f"  Shape: {img.shape}, dtype: {img.dtype}")
+        print(f"  Min: {img.min():.4f}, Max: {img.max():.4f}, Mean: {img.mean():.4f}")
+        
         # All operations in torch, convert to numpy only for PIL
-        img_uint8 = torch.clamp(img.cpu(), 0, 255).to(torch.uint8)
+        img_clamped = torch.clamp(img.cpu(), 0, 255)
+        print(f"[{prefix}_{idx:05d}] AFTER clamp(0, 255):")
+        print(f"  Min: {img_clamped.min():.4f}, Max: {img_clamped.max():.4f}, Mean: {img_clamped.mean():.4f}")
+        
+        img_uint8 = img_clamped.to(torch.uint8)
+        print(f"[{prefix}_{idx:05d}] AFTER .to(uint8):")
+        print(f"  Min: {img_uint8.min()}, Max: {img_uint8.max()}, Mean: {img_uint8.float().mean():.4f}")
+        
         img_np = img_uint8.permute(1, 2, 0).numpy()
+        print(f"[{prefix}_{idx:05d}] AFTER permute & numpy:")
+        print(f"  Shape: {img_np.shape}, dtype: {img_np.dtype}")
+        print(f"  Min: {img_np.min()}, Max: {img_np.max()}, Mean: {img_np.mean():.4f}")
         
         pil_img = Image.fromarray(img_np)
         path = os.path.join(save_dir, f"{prefix}_{idx:05d}.png")
