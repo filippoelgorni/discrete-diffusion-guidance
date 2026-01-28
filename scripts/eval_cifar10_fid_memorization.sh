@@ -31,8 +31,8 @@
 #   CHECKPOINT     - Checkpoint file to load (default: last.ckpt)
 #   EVAL_STEP      - Step identifier for output folder (default: final)
 #   NUM_SAMPLES    - Number of samples to generate (default: 10000)
-#   BATCH_SIZE     - Batch size for generation (default: 64)
-#   SAMPLING_STEPS - Number of diffusion sampling steps (default: 128)
+#   BATCH_SIZE     - Batch size for generation (default: 2, matches training)
+#   SAMPLING_STEPS - Number of diffusion sampling steps (default: 128, matches training)
 #   MEM_THRESHOLD  - Memorization threshold k (default: 1/3)
 #   SEED           - Random seed (default: 42)
 # ============================================================================
@@ -56,7 +56,7 @@ fi
 CHECKPOINT=${CHECKPOINT:-last.ckpt}
 EVAL_STEP=${EVAL_STEP:-final}
 NUM_SAMPLES=${NUM_SAMPLES:-10000}
-BATCH_SIZE=${BATCH_SIZE:-64}
+BATCH_SIZE=${BATCH_SIZE:-2}
 SAMPLING_STEPS=${SAMPLING_STEPS:-128}
 MEM_THRESHOLD=${MEM_THRESHOLD:-0.333333}
 SEED=${SEED:-42}

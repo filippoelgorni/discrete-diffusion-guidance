@@ -52,16 +52,24 @@ def generate_samples(
     samples = []
     num_batches = (num_samples + batch_size - 1) // batch_size
     
-    for _ in tqdm(range(num_batches), desc="Generating samples"):
+    for i in tqdm(range(num_batches), desc="Generating samples"):
         current_batch_size = min(batch_size, num_samples - len(samples) * batch_size if samples else batch_size)
         model.config.sampling.batch_size = current_batch_size
         
         with torch.no_grad():
-            samples.append(model.tokenizer.batch_decode(model.sample()).float())
+            raw_sample = model.sample()
+            print(f"  Batch {i}: raw tokens - min={raw_sample.min():.2f}, max={raw_sample.max():.2f}, mean={raw_sample.mean():.2f}")
+            decoded = model.tokenizer.batch_decode(raw_sample).float()
+            print(f"  Batch {i}: decoded - min={decoded.min():.2f}, max={decoded.max():.2f}, mean={decoded.mean():.2f}")
+            samples.append(decoded)
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
     assert all_samples.shape == (num_samples, 3, 32, 32), \
         f"Generated samples shape {all_samples.shape} != ({num_samples}, 3, 32, 32)"
+    
+    # Debug: print value ranges
+    print(f"Generated samples - min: {all_samples.min():.2f}, max: {all_samples.max():.2f}, mean: {all_samples.mean():.2f}")
+    
     return all_samples
 
 
@@ -213,10 +221,26 @@ def main(args):
     print(f"Loaded {len(train_images)} training images")
     
     # Generate samples
+    print(f"\n=== Model config ===")
+    if hasattr(model.config, 'sampling'):
+        print(f"Sampling config: steps={model.config.sampling.steps}, "
+              f"batch_size={model.config.sampling.batch_size}")
+    
     print(f"\n=== Generating {args.num_samples} samples ===")
     generated_samples = generate_samples(
         model, args.num_samples, batch_size=args.batch_size)
     print(f"Generated {len(generated_samples)} samples")
+    
+    # Save a few sample images for debugging
+    print("Saving first 3 samples for debugging...")
+    debug_dir = os.path.join(eval_dir, "debug_samples")
+    os.makedirs(debug_dir, exist_ok=True)
+    for i in range(min(3, len(generated_samples))):
+        img_uint8 = torch.clamp(generated_samples[i].cpu(), 0, 255).to(torch.uint8)
+        img_np = img_uint8.permute(1, 2, 0).numpy()
+        pil_img = Image.fromarray(img_np)
+        pil_img.save(os.path.join(debug_dir, f"sample_{i}.png"))
+        print(f"  Sample {i}: saved to debug_samples/sample_{i}.png")
     
     # Compute memorization FIRST (before saving images)
     print(f"\n=== Computing memorization (k={args.mem_threshold}) ===")
@@ -351,10 +375,10 @@ if __name__ == "__main__":
                         help="Path to CIFAR-10 dataset root")
     parser.add_argument("--num-samples", type=int, default=10000,
                         help="Number of samples to generate")
-    parser.add_argument("--batch-size", type=int, default=64,
-                        help="Batch size for generation")
+    parser.add_argument("--batch-size", type=int, default=2,
+                        help="Batch size for generation (matches training)")
     parser.add_argument("--sampling-steps", type=int, default=128,
-                        help="Number of sampling steps")
+                        help="Number of sampling steps (matches training)")
     parser.add_argument("--mem-threshold", type=float, default=1/3,
                         help="Threshold k for memorization detection")
     parser.add_argument("--seed", type=int, default=42,
