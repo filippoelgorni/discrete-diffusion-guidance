@@ -97,3 +97,4 @@ srun python -u -m main \
   sampling.steps=128 \
   wandb.name="cifar10_${RUN_NAME}" \
   hydra.run.dir="${PWD}/outputs/cifar10/${RUN_NAME}"
+

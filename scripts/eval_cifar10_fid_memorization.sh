@@ -35,6 +35,9 @@
 #   SAMPLING_STEPS - Number of diffusion sampling steps (default: 128, matches training)
 #   MEM_THRESHOLD  - Memorization threshold k (default: 1/3)
 #   SEED           - Random seed (default: 42)
+#   USE_CFG        - Enable classifier-free guidance (default: true)
+#   CFG_CONDITION  - Class condition for CFG, 0-9 (default: 0)
+#   CFG_GAMMA      - Guidance strength, 0=unconditional, 1=conditional (default: 1.0)
 # ============================================================================
 
 # Dataset path
@@ -60,6 +63,9 @@ BATCH_SIZE=${BATCH_SIZE:-2}
 SAMPLING_STEPS=${SAMPLING_STEPS:-128}
 MEM_THRESHOLD=${MEM_THRESHOLD:-0.333333}
 SEED=${SEED:-42}
+USE_CFG=${USE_CFG:-true}
+CFG_CONDITION=${CFG_CONDITION:-0}
+CFG_GAMMA=${CFG_GAMMA:-1.0}
 
 echo "=============================================="
 echo "CIFAR-10 Evaluation"
@@ -72,8 +78,17 @@ echo "Batch size:      ${BATCH_SIZE}"
 echo "Sampling steps:  ${SAMPLING_STEPS}"
 echo "Mem threshold:   ${MEM_THRESHOLD}"
 echo "Seed:            ${SEED}"
+echo "Use CFG:         ${USE_CFG}"
+echo "CFG condition:   ${CFG_CONDITION}"
+echo "CFG gamma:       ${CFG_GAMMA}"
 echo "CIFAR-10 path:   ${CIFAR10_PATH}"
 echo "=============================================="
+
+# Build CFG arguments
+CFG_ARGS=""
+if [ "${USE_CFG}" = "true" ]; then
+  CFG_ARGS="--use-cfg --cfg-condition ${CFG_CONDITION} --cfg-gamma ${CFG_GAMMA}"
+fi
 
 # Run evaluation
 srun python -u guidance_eval/cifar10_eval.py \
@@ -86,7 +101,8 @@ srun python -u guidance_eval/cifar10_eval.py \
   --batch-size "${BATCH_SIZE}" \
   --sampling-steps "${SAMPLING_STEPS}" \
   --mem-threshold "${MEM_THRESHOLD}" \
-  --seed "${SEED}"
+  --seed "${SEED}" \
+  ${CFG_ARGS}
 
 # Evaluation complete!
 # Results saved to: outputs/cifar10/${RUN_NAME}/eval_step${EVAL_STEP}/

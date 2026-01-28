@@ -249,6 +249,27 @@ def main(args):
     # Override sampling settings
     config.sampling.steps = args.sampling_steps
     
+    # Configure guidance (matching training validation behavior)
+    if args.use_cfg:
+        print(f"\n=== Configuring CFG guidance ===")
+        print(f"  Method: cfg")
+        print(f"  Condition: {args.cfg_condition}")
+        print(f"  Gamma: {args.cfg_gamma}")
+        guidance_config = {
+            'method': 'cfg',
+            'condition': args.cfg_condition,
+            'gamma': args.cfg_gamma
+        }
+        omegaconf.OmegaConf.update(config, key='guidance', value=guidance_config, force_add=True)
+    
+    # Ensure eval settings are properly configured
+    if not hasattr(config, 'eval'):
+        config.eval = omegaconf.DictConfig({})
+    if not hasattr(config.eval, 'disable_ema'):
+        config.eval.disable_ema = False
+    
+    print(f"EMA disabled: {config.eval.disable_ema}")
+    
     # Load tokenizer and model
     tokenizer = dataloader.get_tokenizer(config)
     model = diffusion.Diffusion.load_from_checkpoint(
@@ -428,6 +449,12 @@ if __name__ == "__main__":
                         help="Threshold k for memorization detection")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
+    parser.add_argument("--use-cfg", action="store_true",
+                        help="Enable classifier-free guidance (CFG)")
+    parser.add_argument("--cfg-condition", type=int, default=0,
+                        help="Class condition for CFG (0-9 for CIFAR-10)")
+    parser.add_argument("--cfg-gamma", type=float, default=1.0,
+                        help="Guidance strength for CFG (0=unconditional, 1=conditional)")
     
     args = parser.parse_args()
     main(args)
