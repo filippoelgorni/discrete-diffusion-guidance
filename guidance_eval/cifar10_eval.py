@@ -13,6 +13,7 @@ and k is a threshold (default 1/3).
 import argparse
 import json
 import os
+import shutil
 import typing
 
 import einops
@@ -192,6 +193,12 @@ def main(args):
     
     # Output directory for evaluation
     eval_dir = os.path.join(checkpoint_dir, f"eval_step{args.eval_step}")
+    
+    # Delete existing eval directory if it exists
+    if os.path.exists(eval_dir):
+        print(f"Removing existing eval directory: {eval_dir}")
+        shutil.rmtree(eval_dir)
+    
     os.makedirs(eval_dir, exist_ok=True)
     
     print(f"Loading config from: {config_path}")
