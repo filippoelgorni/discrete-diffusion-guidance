@@ -63,6 +63,18 @@ def generate_samples(
             print(f"  Shape: {raw_sample.shape}, dtype: {raw_sample.dtype}")
             print(f"  Min: {raw_sample.float().min():.4f}, Max: {raw_sample.float().max():.4f}, Mean: {raw_sample.float().mean():.4f}")
             print(f"  Unique values (first 10): {torch.unique(raw_sample)[:10]}")
+            flat_tokens = raw_sample.detach().view(-1).cpu()
+            if flat_tokens.numel() > 0:
+                pct_ge_250 = (flat_tokens >= 250).float().mean().item() * 100
+                pct_ge_240 = (flat_tokens >= 240).float().mean().item() * 100
+                pct_le_15 = (flat_tokens <= 15).float().mean().item() * 100
+                print(f"  Token saturation: >=250: {pct_ge_250:.2f}%, >=240: {pct_ge_240:.2f}%, <=15: {pct_le_15:.2f}%")
+                uniq_vals, counts = torch.unique(flat_tokens, return_counts=True)
+                topk = min(10, counts.numel())
+                top_counts, top_idx = torch.topk(counts, k=topk)
+                top_vals = uniq_vals[top_idx]
+                top_pairs = ", ".join([f"{int(v)}:{int(c)}" for v, c in zip(top_vals.tolist(), top_counts.tolist())])
+                print(f"  Top {topk} token counts: {top_pairs}")
             
             decoded = model.tokenizer.batch_decode(raw_sample).float()
             print(f"[Batch {i}] AFTER batch_decode:")
