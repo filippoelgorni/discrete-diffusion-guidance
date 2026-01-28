@@ -61,7 +61,9 @@ def generate_samples(
             raw_sample = model.sample()
             print(f"  Batch {i}: raw tokens - min={raw_sample.float().min():.2f}, max={raw_sample.float().max():.2f}, mean={raw_sample.float().mean():.2f}")
             decoded = model.tokenizer.batch_decode(raw_sample).float()
-            print(f"  Batch {i}: decoded - min={decoded.min():.2f}, max={decoded.max():.2f}, mean={decoded.mean():.2f}")
+            # Clip to valid pixel range [0, 255] to remove special tokens
+            decoded = torch.clamp(decoded, 0, 255)
+            print(f"  Batch {i}: decoded (clipped) - min={decoded.min():.2f}, max={decoded.max():.2f}, mean={decoded.mean():.2f}")
             samples.append(decoded)
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
