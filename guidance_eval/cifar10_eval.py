@@ -52,20 +52,16 @@ def generate_samples(
     samples = []
     num_batches = (num_samples + batch_size - 1) // batch_size
     
-    for i in tqdm(range(num_batches), desc="Generating samples"):
+    for _ in tqdm(range(num_batches), desc="Generating samples"):
         current_batch_size = min(batch_size, num_samples - len(samples) * batch_size if samples else batch_size)
         model.config.sampling.batch_size = current_batch_size
         
-        # Use the same sampling procedure as training validation
         with torch.no_grad():
-            # model.sample() returns raw tokens, need to decode them
-            sample_tokens = model.sample()
-            # batch_decode converts tokens to images
-            decoded = model.tokenizer.batch_decode(sample_tokens)
-            # Match training code: just convert to float (keeps [0, 255] range)
-            samples.append(decoded.float())
+            samples.append(model.tokenizer.batch_decode(model.sample()).float())
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
+    assert all_samples.shape == (num_samples, 3, 32, 32), \
+        f"Generated samples shape {all_samples.shape} != ({num_samples}, 3, 32, 32)"
     return all_samples
 
 
@@ -90,6 +86,12 @@ def compute_memorization(
         nearest_indices: Index of nearest neighbor for each sample
         memorization_ratios: Ratio for each sample
     """
+    # Validate input shapes
+    assert len(generated.shape) == 4 and generated.shape[1:] == (3, 32, 32), \
+        f"Generated samples shape {generated.shape} != (N, 3, 32, 32)"
+    assert len(train_images.shape) == 4 and train_images.shape[1:] == (3, 32, 32), \
+        f"Train images shape {train_images.shape} != (M, 3, 32, 32)"
+    
     # Flatten images
     gen_flat = generated.cpu().view(generated.shape[0], -1).numpy()
     train_flat = train_images.cpu().view(train_images.shape[0], -1).numpy()
@@ -143,7 +145,7 @@ def save_images(
     """Save images to disk.
     
     Args:
-        images: Tensor of images (N, C, H, W) in range [0, 1] or [0, 255]
+        images: Tensor of images (N, C, H, W) in range [0, 255]
         save_dir: Directory to save images
         prefix: Prefix for filenames
         indices: Optional list of original indices (for naming)
@@ -155,18 +157,13 @@ def save_images(
     paths = []
     
     for i, img in enumerate(tqdm(images, desc=f"Saving {prefix} images")):
-        # Use original index if provided, otherwise use loop index
         idx = indices[i] if indices is not None else i
         
-        # Convert to PIL
-        # Handle both [0, 1] and [0, 255] ranges
-        if img.max() <= 1.0:
-            img_np = (img.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-        else:
-            img_np = img.cpu().permute(1, 2, 0).numpy().astype(np.uint8)
+        # All operations in torch, convert to numpy only for PIL
+        img_uint8 = torch.clamp(img.cpu(), 0, 255).to(torch.uint8)
+        img_np = img_uint8.permute(1, 2, 0).numpy()
         
         pil_img = Image.fromarray(img_np)
-        
         path = os.path.join(save_dir, f"{prefix}_{idx:05d}.png")
         pil_img.save(path)
         paths.append(path)
