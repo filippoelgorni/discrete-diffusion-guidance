@@ -40,7 +40,15 @@ def load_cifar10_train(root: str) -> torch.Tensor:
     for img, label in tqdm(dataset, desc="Loading CIFAR-10 train"):
         images.append(img)
         labels.append(label)
-    return torch.stack(images), torch.tensor(labels)
+    train_images = torch.stack(images)
+    train_labels = torch.tensor(labels)
+    
+    # Convert from [0, 1] to [0, 255] to match generated samples
+    train_images = train_images * 255.0
+    
+    print(f"Training images range: min={train_images.min():.2f}, max={train_images.max():.2f}, mean={train_images.mean():.2f}")
+    
+    return train_images, train_labels
 
 
 def generate_samples(
@@ -59,41 +67,13 @@ def generate_samples(
         
         with torch.no_grad():
             raw_sample = model.sample()
-            print(f"\n[Batch {i}] RAW SAMPLE (before batch_decode):")
-            print(f"  Shape: {raw_sample.shape}, dtype: {raw_sample.dtype}")
-            print(f"  Min: {raw_sample.float().min():.4f}, Max: {raw_sample.float().max():.4f}, Mean: {raw_sample.float().mean():.4f}")
-            print(f"  Unique values (first 10): {torch.unique(raw_sample)[:10]}")
-            flat_tokens = raw_sample.detach().view(-1).cpu()
-            if flat_tokens.numel() > 0:
-                pct_ge_250 = (flat_tokens >= 250).float().mean().item() * 100
-                pct_ge_240 = (flat_tokens >= 240).float().mean().item() * 100
-                pct_le_15 = (flat_tokens <= 15).float().mean().item() * 100
-                print(f"  Token saturation: >=250: {pct_ge_250:.2f}%, >=240: {pct_ge_240:.2f}%, <=15: {pct_le_15:.2f}%")
-                uniq_vals, counts = torch.unique(flat_tokens, return_counts=True)
-                topk = min(10, counts.numel())
-                top_counts, top_idx = torch.topk(counts, k=topk)
-                top_vals = uniq_vals[top_idx]
-                top_pairs = ", ".join([f"{int(v)}:{int(c)}" for v, c in zip(top_vals.tolist(), top_counts.tolist())])
-                print(f"  Top {topk} token counts: {top_pairs}")
-            
             decoded = model.tokenizer.batch_decode(raw_sample).float()
-            print(f"[Batch {i}] AFTER batch_decode:")
-            print(f"  Shape: {decoded.shape}, dtype: {decoded.dtype}")
-            print(f"  Min: {decoded.min():.4f}, Max: {decoded.max():.4f}, Mean: {decoded.mean():.4f}")
-            
-            # Clip to valid pixel range [0, 255] to remove special tokens
             decoded = torch.clamp(decoded, 0, 255)
-            print(f"[Batch {i}] AFTER clamp(0, 255):")
-            print(f"  Min: {decoded.min():.4f}, Max: {decoded.max():.4f}, Mean: {decoded.mean():.4f}")
-            
             samples.append(decoded)
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
     assert all_samples.shape == (num_samples, 3, 32, 32), \
         f"Generated samples shape {all_samples.shape} != ({num_samples}, 3, 32, 32)"
-    
-    # Debug: print value ranges
-    print(f"Generated samples - min: {all_samples.min():.2f}, max: {all_samples.max():.2f}, mean: {all_samples.mean():.2f}")
     
     return all_samples
 
@@ -192,23 +172,8 @@ def save_images(
     for i, img in enumerate(tqdm(images, desc=f"Saving {prefix} images")):
         idx = indices[i] if indices is not None else i
         
-        print(f"\n[{prefix}_{idx:05d}] BEFORE uint8 conversion:")
-        print(f"  Shape: {img.shape}, dtype: {img.dtype}")
-        print(f"  Min: {img.min():.4f}, Max: {img.max():.4f}, Mean: {img.mean():.4f}")
-        
-        # All operations in torch, convert to numpy only for PIL
-        img_clamped = torch.clamp(img.cpu(), 0, 255)
-        print(f"[{prefix}_{idx:05d}] AFTER clamp(0, 255):")
-        print(f"  Min: {img_clamped.min():.4f}, Max: {img_clamped.max():.4f}, Mean: {img_clamped.mean():.4f}")
-        
-        img_uint8 = img_clamped.to(torch.uint8)
-        print(f"[{prefix}_{idx:05d}] AFTER .to(uint8):")
-        print(f"  Min: {img_uint8.min()}, Max: {img_uint8.max()}, Mean: {img_uint8.float().mean():.4f}")
-        
+        img_uint8 = torch.clamp(img.cpu(), 0, 255).to(torch.uint8)
         img_np = img_uint8.permute(1, 2, 0).numpy()
-        print(f"[{prefix}_{idx:05d}] AFTER permute & numpy:")
-        print(f"  Shape: {img_np.shape}, dtype: {img_np.dtype}")
-        print(f"  Min: {img_np.min()}, Max: {img_np.max()}, Mean: {img_np.mean():.4f}")
         
         pil_img = Image.fromarray(img_np)
         path = os.path.join(save_dir, f"{prefix}_{idx:05d}.png")
@@ -297,17 +262,6 @@ def main(args):
         model, args.num_samples, batch_size=args.batch_size)
     print(f"Generated {len(generated_samples)} samples")
     
-    # Save a few sample images for debugging
-    print("Saving first 3 samples for debugging...")
-    debug_dir = os.path.join(eval_dir, "debug_samples")
-    os.makedirs(debug_dir, exist_ok=True)
-    for i in range(min(3, len(generated_samples))):
-        img_uint8 = torch.clamp(generated_samples[i].cpu(), 0, 255).to(torch.uint8)
-        img_np = img_uint8.permute(1, 2, 0).numpy()
-        pil_img = Image.fromarray(img_np)
-        pil_img.save(os.path.join(debug_dir, f"sample_{i}.png"))
-        print(f"  Sample {i}: saved to debug_samples/sample_{i}.png")
-    
     # Compute memorization FIRST (before saving images)
     print(f"\n=== Computing memorization (k={args.mem_threshold}) ===")
     f_mem, nearest_indices, mem_ratios = compute_memorization(
@@ -362,11 +316,9 @@ def main(args):
         sample_is_memorized = ratio < args.mem_threshold
         
         # Save nearest neighbor image to appropriate directory
-        # Handle both [0, 1] and [0, 255] ranges
-        if nn_img.max() <= 1.0:
-            nn_img_np = (nn_img.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-        else:
-            nn_img_np = nn_img.cpu().permute(1, 2, 0).numpy().astype(np.uint8)
+        # Training images are already in [0, 255] range
+        nn_img_uint8 = torch.clamp(nn_img.cpu(), 0, 255).to(torch.uint8)
+        nn_img_np = nn_img_uint8.permute(1, 2, 0).numpy()
         
         nn_pil = Image.fromarray(nn_img_np)
         
