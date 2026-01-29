@@ -208,11 +208,25 @@ def main(args):
     print(f"Loading checkpoint from: {checkpoint_path}")
     print(f"Saving results to: {eval_dir}")
     
+    # Verify checkpoint exists
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    
+    # Log checkpoint file info
+    ckpt_size = os.path.getsize(checkpoint_path)
+    ckpt_mtime = os.path.getmtime(checkpoint_path)
+    from datetime import datetime
+    ckpt_time = datetime.fromtimestamp(ckpt_mtime).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"Checkpoint file: {ckpt_size} bytes, modified: {ckpt_time}")
+    
     # Load config
     config = omegaconf.OmegaConf.load(config_path)
     
-    # Override sampling settings
-    config.sampling.steps = args.sampling_steps
+    # Override sampling settings only when explicitly provided
+    if args.sampling_steps is not None:
+        config.sampling.steps = args.sampling_steps
+    if args.batch_size is not None:
+        config.sampling.batch_size = args.batch_size
     
     # Configure guidance (matching training validation behavior)
     if args.use_cfg:
@@ -246,6 +260,20 @@ def main(args):
     model = model.to('cuda')
     model.eval()
     
+    # Log model state to confirm checkpoint loaded
+    print(f"\n=== Model loaded ===")
+    print(f"Global step (from checkpoint): {model.global_step}")
+    if hasattr(model, 'current_epoch'):
+        print(f"Epoch (from checkpoint): {model.current_epoch}")
+    # Get a sample from first layer to verify weights
+    try:
+        first_param = next(model.backbone.parameters())
+        param_mean = first_param.mean().item()
+        param_std = first_param.std().item()
+        print(f"Model backbone param stats: mean={param_mean:.6f}, std={param_std:.6f}")
+    except:
+        pass
+    
     # Load CIFAR-10 training data
     print("\n=== Loading CIFAR-10 training data ===")
     train_images, train_labels = load_cifar10_train(args.cifar10_path)
@@ -259,7 +287,7 @@ def main(args):
     
     print(f"\n=== Generating {args.num_samples} samples ===")
     generated_samples = generate_samples(
-        model, args.num_samples, batch_size=args.batch_size)
+        model, args.num_samples, batch_size=model.config.sampling.batch_size)
     print(f"Generated {len(generated_samples)} samples")
     
     # Compute memorization FIRST (before saving images)
@@ -346,7 +374,7 @@ def main(args):
         "checkpoint": args.checkpoint,
         "eval_step": args.eval_step,
         "num_samples": args.num_samples,
-        "sampling_steps": args.sampling_steps,
+        "sampling_steps": int(model.config.sampling.steps),
         "seed": args.seed,
         "metrics": {
             "f_mem": float(f_mem),

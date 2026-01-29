@@ -59,8 +59,8 @@ fi
 CHECKPOINT=${CHECKPOINT:-last.ckpt}
 EVAL_STEP=${EVAL_STEP:-final}
 NUM_SAMPLES=${NUM_SAMPLES:-10000}
-BATCH_SIZE=${BATCH_SIZE:-2}
-SAMPLING_STEPS=${SAMPLING_STEPS:-128}
+BATCH_SIZE=${BATCH_SIZE:-}
+SAMPLING_STEPS=${SAMPLING_STEPS:-}
 MEM_THRESHOLD=${MEM_THRESHOLD:-0.333333}
 SEED=${SEED:-42}
 USE_CFG=${USE_CFG:-true}
@@ -74,8 +74,8 @@ echo "Run name:        ${RUN_NAME}"
 echo "Checkpoint:      ${CHECKPOINT}"
 echo "Eval step:       ${EVAL_STEP}"
 echo "Num samples:     ${NUM_SAMPLES}"
-echo "Batch size:      ${BATCH_SIZE}"
-echo "Sampling steps:  ${SAMPLING_STEPS}"
+echo "Batch size:      ${BATCH_SIZE:-from config}"
+echo "Sampling steps:  ${SAMPLING_STEPS:-from config}"
 echo "Mem threshold:   ${MEM_THRESHOLD}"
 echo "Seed:            ${SEED}"
 echo "Use CFG:         ${USE_CFG}"
@@ -90,6 +90,15 @@ if [ "${USE_CFG}" = "true" ]; then
   CFG_ARGS="--use-cfg --cfg-condition ${CFG_CONDITION} --cfg-gamma ${CFG_GAMMA}"
 fi
 
+# Build optional sampling args (use config defaults when unset)
+SAMPLING_ARGS=""
+if [ -n "${BATCH_SIZE}" ]; then
+  SAMPLING_ARGS="${SAMPLING_ARGS} --batch-size ${BATCH_SIZE}"
+fi
+if [ -n "${SAMPLING_STEPS}" ]; then
+  SAMPLING_ARGS="${SAMPLING_ARGS} --sampling-steps ${SAMPLING_STEPS}"
+fi
+
 # Run evaluation
 srun python -u guidance_eval/cifar10_eval.py \
   --run-name "${RUN_NAME}" \
@@ -98,11 +107,10 @@ srun python -u guidance_eval/cifar10_eval.py \
   --eval-step "${EVAL_STEP}" \
   --cifar10-path "${CIFAR10_PATH}" \
   --num-samples "${NUM_SAMPLES}" \
-  --batch-size "${BATCH_SIZE}" \
-  --sampling-steps "${SAMPLING_STEPS}" \
   --mem-threshold "${MEM_THRESHOLD}" \
   --seed "${SEED}" \
-  ${CFG_ARGS}
+  ${CFG_ARGS} \
+  ${SAMPLING_ARGS}
 
 # Evaluation complete!
 # Results saved to: outputs/cifar10/${RUN_NAME}/eval_step${EVAL_STEP}/
