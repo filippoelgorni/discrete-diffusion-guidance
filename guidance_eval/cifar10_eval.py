@@ -55,15 +55,33 @@ def generate_samples(
     model: diffusion.Diffusion,
     num_samples: int,
     batch_size: int = 64,
-) -> torch.Tensor:
-    """Generate samples from the diffusion model using same procedure as training."""
+    num_classes: int = 10,
+) -> typing.Tuple[torch.Tensor, typing.List[int]]:
+    """Generate samples from the diffusion model using same procedure as training.
+    
+    Returns:
+        samples: Generated images
+        conditions: List of class conditions used for each sample (if CFG enabled)
+    """
     model.eval()
     samples = []
+    conditions = []
     num_batches = (num_samples + batch_size - 1) // batch_size
+    
+    # Check if guidance is enabled
+    use_guidance = (hasattr(model.config, 'guidance') 
+                    and model.config.guidance is not None 
+                    and model.config.guidance.method == 'cfg')
     
     for i in tqdm(range(num_batches), desc="Generating samples"):
         current_batch_size = min(batch_size, num_samples - len(samples) * batch_size if samples else batch_size)
         model.config.sampling.batch_size = current_batch_size
+        
+        # Randomly sample condition for this batch if using guidance
+        if use_guidance:
+            batch_condition = np.random.randint(0, num_classes)
+            model.config.guidance.condition = batch_condition
+            conditions.extend([batch_condition] * current_batch_size)
         
         with torch.no_grad():
             raw_sample = model.sample()
@@ -72,10 +90,12 @@ def generate_samples(
             samples.append(decoded)
     
     all_samples = torch.cat(samples, dim=0)[:num_samples]
+    conditions = conditions[:num_samples] if use_guidance else [None] * num_samples
+    
     assert all_samples.shape == (num_samples, 3, 32, 32), \
         f"Generated samples shape {all_samples.shape} != ({num_samples}, 3, 32, 32)"
     
-    return all_samples
+    return all_samples, conditions
 
 
 def compute_memorization(
@@ -286,9 +306,17 @@ def main(args):
               f"batch_size={model.config.sampling.batch_size}")
     
     print(f"\n=== Generating {args.num_samples} samples ===")
-    generated_samples = generate_samples(
-        model, args.num_samples, batch_size=model.config.sampling.batch_size)
+    generated_samples, sample_conditions = generate_samples(
+        model, args.num_samples, batch_size=model.config.sampling.batch_size,
+        num_classes=config.data.num_classes)
     print(f"Generated {len(generated_samples)} samples")
+    
+    # Print condition distribution if using guidance
+    if sample_conditions[0] is not None:
+        condition_counts = {}
+        for cond in sample_conditions:
+            condition_counts[cond] = condition_counts.get(cond, 0) + 1
+        print(f"Condition distribution: {condition_counts}")
     
     # Compute memorization FIRST (before saving images)
     print(f"\n=== Computing memorization (k={args.mem_threshold}) ===")
@@ -361,6 +389,7 @@ def main(args):
         nn_info.append({
             "generated_idx": i,
             "generated_path": all_gen_paths[i],
+            "generated_condition": sample_conditions[i] if sample_conditions[i] is not None else None,
             "nearest_neighbor_idx": int(nn_idx),
             "nearest_neighbor_path": nn_path,
             "nearest_neighbor_label": nn_label,
