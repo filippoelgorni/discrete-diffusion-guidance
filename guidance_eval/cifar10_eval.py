@@ -389,7 +389,6 @@ def main(args):
         nn_info.append({
             "generated_idx": i,
             "generated_path": all_gen_paths[i],
-            "generated_condition": sample_conditions[i] if sample_conditions[i] is not None else None,
             "nearest_neighbor_idx": int(nn_idx),
             "nearest_neighbor_path": nn_path,
             "nearest_neighbor_label": nn_label,
