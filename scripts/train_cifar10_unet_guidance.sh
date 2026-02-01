@@ -38,8 +38,6 @@ if [ -z "${MODEL}" ]; then
   exit 1
 fi
 
-RUN_NAME="${SLURM_JOB_NAME}"
-
 T=0
 if [ "${MODEL}" = "mdlm" ]; then
   PARAMETERIZATION=subs
@@ -59,13 +57,29 @@ else
 fi
 
 # Optional: Set SUBSET_FRACTION to use only a portion of the dataset
-# Examples: 0.1 (10%), 0.01 (1%), or 1.0 (100% - full dataset)
+# Examples: 0.1 (10%), 0.01 (1%), 0.001 (0.1%), or 1.0 (100% - full dataset)
 SUBSET_FRACTION=${SUBSET_FRACTION:-1.0}
+
+# Optional: Set BATCH_SIZE for training (default: 250)
+# Note: To use very small SUBSET_FRACTION values, you may need smaller batch sizes.
+# For SUBSET_FRACTION=0.001, need at least ~50 samples per batch to get ≥1 batch.
+BATCH_SIZE=${BATCH_SIZE:-250}
 
 # Optional: Set MAX_STEPS to train for more/fewer steps (default: 300000)
 MAX_STEPS=${MAX_STEPS:-300000}
 
-# To enable preemption re-loading, set `hydra.run.dir` or
+echo "=============================================="
+echo "Training Configuration"
+echo "=============================================="
+echo "MODEL:           ${MODEL}"
+echo "Parameterization: ${PARAMETERIZATION}"
+echo "Diffusion:       ${DIFFUSION}"
+echo "Batch size:      ${BATCH_SIZE}"
+echo "Subset fraction: ${SUBSET_FRACTION}"
+echo "Max steps:       ${MAX_STEPS}"
+echo "=============================================="
+
+# To enable preemption re-loading, set `hydra.run.dir`
 srun python -u -m main \
   is_vision=True \
   diffusion=${DIFFUSION} \
@@ -76,7 +90,7 @@ srun python -u -m main \
   data=cifar10 \
   data.train=${DATASET_PATH} \
   data.valid=${DATASET_PATH} \
-  loader.global_batch_size=512 \
+  loader.global_batch_size=${BATCH_SIZE} \
   loader.eval_global_batch_size=64 \
   backbone=unet \
   model=unet \
