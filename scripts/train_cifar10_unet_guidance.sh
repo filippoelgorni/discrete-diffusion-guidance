@@ -65,6 +65,10 @@ SUBSET_FRACTION=${SUBSET_FRACTION:-1.0}
 # For SUBSET_FRACTION=0.001, need at least ~50 samples per batch to get ≥1 batch.
 BATCH_SIZE=${BATCH_SIZE:-250}
 
+# Optional: Set LIMIT_VAL_BATCHES separately from SUBSET_FRACTION (default: same as SUBSET_FRACTION)
+# Use this if you get "limit_val_batches < 1" errors with small SUBSET_FRACTION
+LIMIT_VAL_BATCHES=${LIMIT_VAL_BATCHES:-${SUBSET_FRACTION}}
+
 # Optional: Set MAX_STEPS to train for more/fewer steps (default: 300000)
 MAX_STEPS=${MAX_STEPS:-300000}
 
@@ -76,6 +80,7 @@ echo "Parameterization: ${PARAMETERIZATION}"
 echo "Diffusion:       ${DIFFUSION}"
 echo "Batch size:      ${BATCH_SIZE}"
 echo "Subset fraction: ${SUBSET_FRACTION}"
+echo "Val limit:       ${LIMIT_VAL_BATCHES}"
 echo "Max steps:       ${MAX_STEPS}"
 echo "=============================================="
 
@@ -102,7 +107,7 @@ srun python -u -m main \
   trainer.val_check_interval=10_000 \
   +trainer.check_val_every_n_epoch=null \
   trainer.limit_train_batches=${SUBSET_FRACTION} \
-  trainer.limit_val_batches=${SUBSET_FRACTION} \
+  trainer.limit_val_batches=${LIMIT_VAL_BATCHES} \
   training.guidance.cond_dropout=0.1 \
   eval.generate_samples=True \
   sampling.num_sample_batches=1 \
