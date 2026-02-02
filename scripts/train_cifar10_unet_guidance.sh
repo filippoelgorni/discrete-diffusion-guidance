@@ -10,7 +10,7 @@
 #SBATCH --output=out/%x_%j.out
 #SBATCH --error=err/%x_%j.err
 #SBATCH --mail-type=all
-#SBATCH --mail-user=3261535@phd.unibocconi.it
+#SBATCH --mail-user=3261535+hpc@phd.unibocconi.it
 
 # NOTE: Need to set the (local) dataset path for downloaded cifar-10 data
 DATASET_PATH=${HOME}/discrete-diffusion-guidance/data/cifar10
