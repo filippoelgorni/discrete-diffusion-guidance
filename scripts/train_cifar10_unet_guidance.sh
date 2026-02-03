@@ -13,7 +13,8 @@
 #SBATCH --mail-user=3261535+hpc@phd.unibocconi.it
 
 # NOTE: Need to set the (local) dataset path for downloaded cifar-10 data
-DATASET_PATH=${HOME}/discrete-diffusion-guidance/data/cifar10
+# For subset training, point to the preprocessed subset directory instead
+DATASET_PATH=${DATASET_PATH:-${HOME}/discrete-diffusion-guidance/data/cifar10}
 
 <<comment
 #  Usage:
