@@ -28,6 +28,13 @@ comment
 
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
+REPO_ROOT=$(pwd)
+
+# Convert DATASET_PATH to absolute path relative to repo root if not already absolute
+if [[ "${DATASET_PATH}" != /* ]]; then
+  DATASET_PATH="${REPO_ROOT}/${DATASET_PATH}"
+fi
+
 source setup_env.sh
 export NCCL_P2P_LEVEL=NVL
 export HYDRA_FULL_ERROR=1
@@ -57,18 +64,8 @@ else
   exit 1
 fi
 
-# Optional: Set SUBSET_FRACTION to use only a portion of the dataset
-# Examples: 0.1 (10%), 0.01 (1%), 0.001 (0.1%), or 1.0 (100% - full dataset)
-SUBSET_FRACTION=${SUBSET_FRACTION:-1.0}
-
 # Optional: Set BATCH_SIZE for training (default: 250)
-# Note: To use very small SUBSET_FRACTION values, you may need smaller batch sizes.
-# For SUBSET_FRACTION=0.001, need at least ~50 samples per batch to get ≥1 batch.
 BATCH_SIZE=${BATCH_SIZE:-250}
-
-# Optional: Set LIMIT_VAL_BATCHES separately from SUBSET_FRACTION (default: same as SUBSET_FRACTION)
-# Use this if you get "limit_val_batches < 1" errors with small SUBSET_FRACTION
-LIMIT_VAL_BATCHES=${LIMIT_VAL_BATCHES:-${SUBSET_FRACTION}}
 
 # Optional: Set MAX_STEPS to train for more/fewer steps (default: 300000)
 MAX_STEPS=${MAX_STEPS:-300000}
@@ -80,8 +77,6 @@ echo "MODEL:           ${MODEL}"
 echo "Parameterization: ${PARAMETERIZATION}"
 echo "Diffusion:       ${DIFFUSION}"
 echo "Batch size:      ${BATCH_SIZE}"
-echo "Subset fraction: ${SUBSET_FRACTION}"
-echo "Val limit:       ${LIMIT_VAL_BATCHES}"
 echo "Max steps:       ${MAX_STEPS}"
 echo "=============================================="
 
@@ -107,8 +102,6 @@ srun python -u -m main \
   trainer.max_steps=${MAX_STEPS} \
   trainer.val_check_interval=10_000 \
   +trainer.check_val_every_n_epoch=null \
-  trainer.limit_train_batches=${SUBSET_FRACTION} \
-  trainer.limit_val_batches=${LIMIT_VAL_BATCHES} \
   training.guidance.cond_dropout=0.1 \
   eval.generate_samples=True \
   sampling.num_sample_batches=1 \
