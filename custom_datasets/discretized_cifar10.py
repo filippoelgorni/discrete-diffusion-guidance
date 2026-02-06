@@ -45,7 +45,7 @@ class DiscreteCIFAR10(torchvision.datasets.CIFAR10):
     self.transform = torchvision.transforms.Compose(
       [
         torchvision.transforms.Resize(32),
-        torchvision.transforms.RandomHorizontalFlip(),
+        # torchvision.transforms.RandomHorizontalFlip(),  # Disabled mirroring
         torchvision.transforms.ToTensor(),
         torchvision.transforms.Lambda(
           lambda x: einops.rearrange(x, "c h w -> (c h w)")),
