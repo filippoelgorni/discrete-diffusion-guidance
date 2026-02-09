@@ -30,6 +30,7 @@
 #   RUN_NAME       - Name of the run folder in outputs/cifar10/ (required)
 #   CHECKPOINT     - Checkpoint file to load (default: last.ckpt)
 #   EVAL_STEP      - Step identifier for output folder (default: final)
+#   EVAL_FOLDER    - Custom eval folder name (default: eval_step${EVAL_STEP})
 #   NUM_SAMPLES    - Number of samples to generate (default: 10000)
 #   BATCH_SIZE     - Batch size for generation (default: 2, matches training)
 #   SAMPLING_STEPS - Number of diffusion sampling steps (default: 128, matches training)
@@ -38,6 +39,7 @@
 #   USE_CFG        - Enable classifier-free guidance (default: true)
 #   CFG_CONDITION  - Class condition for CFG, 0-9 (default: 0)
 #   CFG_GAMMA      - Guidance strength, 0=unconditional, 1=conditional (default: 1.0)
+#   CIFAR10_PATH   - Path to CIFAR-10 dataset (default: ${HOME}/discrete-diffusion-guidance/data/cifar10)
 # ============================================================================
 
 # Dataset path
@@ -58,6 +60,7 @@ fi
 # Set defaults
 CHECKPOINT=${CHECKPOINT:-last.ckpt}
 EVAL_STEP=${EVAL_STEP:-final}
+EVAL_FOLDER=${EVAL_FOLDER:-eval_step${EVAL_STEP}}
 NUM_SAMPLES=${NUM_SAMPLES:-10000}
 BATCH_SIZE=${BATCH_SIZE:-}
 SAMPLING_STEPS=${SAMPLING_STEPS:-}
@@ -73,6 +76,7 @@ echo "=============================================="
 echo "Run name:        ${RUN_NAME}"
 echo "Checkpoint:      ${CHECKPOINT}"
 echo "Eval step:       ${EVAL_STEP}"
+echo "Eval folder:     ${EVAL_FOLDER}"
 echo "Num samples:     ${NUM_SAMPLES}"
 echo "Batch size:      ${BATCH_SIZE:-from config}"
 echo "Sampling steps:  ${SAMPLING_STEPS:-from config}"
@@ -104,7 +108,7 @@ srun python -u guidance_eval/cifar10_eval.py \
   --run-name "${RUN_NAME}" \
   --outputs-dir "outputs/cifar10" \
   --checkpoint "${CHECKPOINT}" \
-  --eval-step "${EVAL_STEP}" \
+  --eval-step "${EVAL_FOLDER}" \
   --cifar10-path "${CIFAR10_PATH}" \
   --num-samples "${NUM_SAMPLES}" \
   --mem-threshold "${MEM_THRESHOLD}" \
@@ -113,4 +117,4 @@ srun python -u guidance_eval/cifar10_eval.py \
   ${SAMPLING_ARGS}
 
 # Evaluation complete!
-# Results saved to: outputs/cifar10/${RUN_NAME}/eval_step${EVAL_STEP}/
+# Results saved to: outputs/cifar10/${RUN_NAME}/${EVAL_FOLDER}/
