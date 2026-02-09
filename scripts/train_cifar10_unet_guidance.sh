@@ -70,6 +70,8 @@ BATCH_SIZE=${BATCH_SIZE:-250}
 # Optional: Set MAX_STEPS to train for more/fewer steps (default: 300000)
 MAX_STEPS=${MAX_STEPS:-300000}
 
+CHECKPOINT_EVERY_N_STEPS=${CHECKPOINT_EVERY_N_STEPS:-10000}
+
 echo "=============================================="
 echo "Training Configuration"
 echo "=============================================="
@@ -78,6 +80,7 @@ echo "Parameterization: ${PARAMETERIZATION}"
 echo "Diffusion:       ${DIFFUSION}"
 echo "Batch size:      ${BATCH_SIZE}"
 echo "Max steps:       ${MAX_STEPS}"
+echo "Checkpoint every n steps: ${CHECKPOINT_EVERY_N_STEPS}"
 echo "=============================================="
 
 # To enable preemption re-loading, set `hydra.run.dir`
@@ -98,7 +101,7 @@ srun python -u -m main \
   optim.lr=2e-4 \
   lr_scheduler=constant_warmup \
   lr_scheduler.num_warmup_steps=5000 \
-  callbacks.checkpoint_every_n_steps.every_n_train_steps=10_000 \
+  callbacks.checkpoint_every_n_steps.every_n_train_steps=${CHECKPOINT_EVERY_N_STEPS} \
   trainer.max_steps=${MAX_STEPS} \
   trainer.val_check_interval=10_000 \
   +trainer.check_val_every_n_epoch=null \
