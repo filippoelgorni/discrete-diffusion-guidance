@@ -20,46 +20,104 @@ Usage:
 import argparse
 import json
 import os
+import pickle
 import typing
 
+import numpy as np
 import torch
-import torchvision
 from PIL import Image
 from tqdm import tqdm
 
 
-def load_cifar10(root: str, split: str = "train") -> tuple:
-    """Load CIFAR-10 dataset as tensors.
+def load_cifar10_from_pickle(root: str, split: str = "train") -> tuple:
+    """Load CIFAR-10 directly from pickle files (no downloads).
     
     Args:
-        root: Path to CIFAR-10 dataset
+        root: Path to CIFAR-10 dataset root (containing cifar-10-batches-py/)
         split: Either "train" or "test"
     
     Returns:
         images: Tensor of shape (N, 3, 32, 32) in range [0, 255]
         labels: Tensor of shape (N,) with class labels
     """
-    is_train = (split == "train")
-    dataset = torchvision.datasets.CIFAR10(
-        root=root, 
-        train=is_train, 
-        download=True,
-        transform=torchvision.transforms.ToTensor()
-    )
+    batches_dir = os.path.join(root, 'cifar-10-batches-py')
     
-    images = []
-    labels = []
-    for img, label in tqdm(dataset, desc=f"Loading CIFAR-10 {split}"):
-        images.append(img)
-        labels.append(label)
+    if not os.path.exists(batches_dir):
+        raise FileNotFoundError(
+            f"CIFAR-10 batches directory not found: {batches_dir}\n"
+            f"Expected structure: {root}/cifar-10-batches-py/data_batch_* or test_batch"
+        )
     
-    images_tensor = torch.stack(images)
-    labels_tensor = torch.tensor(labels)
+    all_data = []
+    all_labels = []
     
-    # Convert from [0, 1] to [0, 255]
-    images_tensor = images_tensor * 255.0
+    if split == "train":
+        # Load all data_batch files
+        batch_files = [f'data_batch_{i}' for i in range(1, 6)]
+        for batch_file in batch_files:
+            batch_path = os.path.join(batches_dir, batch_file)
+            if not os.path.exists(batch_path):
+                print(f"Warning: {batch_file} not found, skipping...")
+                continue
+            
+            with open(batch_path, 'rb') as f:
+                batch_dict = pickle.load(f, encoding='bytes')
+            
+            # Handle both byte keys and string keys
+            if b'data' in batch_dict:
+                data = batch_dict[b'data']
+                labels = batch_dict[b'labels']
+            else:
+                data = batch_dict['data']
+                labels = batch_dict['labels']
+            
+            all_data.append(data)
+            all_labels.extend(labels)
+    else:
+        # Load test batch
+        test_path = os.path.join(batches_dir, 'test_batch')
+        if not os.path.exists(test_path):
+            raise FileNotFoundError(f"Test batch not found: {test_path}")
+        
+        with open(test_path, 'rb') as f:
+            batch_dict = pickle.load(f, encoding='bytes')
+        
+        if b'data' in batch_dict:
+            data = batch_dict[b'data']
+            labels = batch_dict[b'labels']
+        else:
+            data = batch_dict['data']
+            labels = batch_dict['labels']
+        
+        all_data.append(data)
+        all_labels.extend(labels)
     
-    print(f"Loaded {len(images_tensor)} {split} images")
+    if not all_data:
+        raise ValueError(f"No data loaded from {batches_dir}")
+    
+    # Concatenate all batches
+    data = np.concatenate(all_data, axis=0)
+    labels = np.array(all_labels)
+    
+    print(f"Raw data shape: {data.shape}, dtype: {data.dtype}, range: [{data.min()}, {data.max()}]")
+    
+    # Handle different data formats:
+    # - Standard CIFAR-10: (N, 3072) flat array
+    # - Preprocessed subset: (N, 32, 32, 3) already reshaped
+    if len(data.shape) == 2:
+        # Standard format: (N, 3072) -> reshape to (N, 3, 32, 32) -> transpose to (N, 32, 32, 3)
+        data = data.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
+    elif len(data.shape) == 4 and data.shape[1:] == (32, 32, 3):
+        # Already in correct format (N, 32, 32, 3)
+        pass
+    else:
+        raise ValueError(f"Unexpected data shape: {data.shape}")
+    
+    # Convert to torch tensors: (N, H, W, C) -> (N, C, H, W)
+    images_tensor = torch.from_numpy(data).permute(0, 3, 1, 2).float()
+    labels_tensor = torch.from_numpy(labels).long()
+    
+    print(f"Tensor shape: {images_tensor.shape}, dtype: {images_tensor.dtype}")
     print(f"Image range: min={images_tensor.min():.2f}, max={images_tensor.max():.2f}, mean={images_tensor.mean():.2f}")
     
     return images_tensor, labels_tensor
@@ -116,7 +174,7 @@ def save_images(
 def main(args):
     # Load CIFAR-10
     print(f"Loading CIFAR-10 {args.split} split from: {args.cifar10_path}")
-    images, labels = load_cifar10(args.cifar10_path, args.split)
+    images, labels = load_cifar10_from_pickle(args.cifar10_path, args.split)
     
     # Save metadata
     class_names = [
