@@ -467,7 +467,7 @@ def get_dataloaders(config, tokenizer, skip_train=False,
   else:
     if 'cifar10' in config.data.train:
       train_set = custom_datasets.discretized_cifar10.DiscreteCIFAR10(
-        config.data.train, train=True, download=True)
+        config.data.train, train=True, download=False)
     else:
       train_set = get_dataset(
         config.data.train,
@@ -492,7 +492,7 @@ def get_dataloaders(config, tokenizer, skip_train=False,
   else:
     if 'cifar10' in config.data.train:
       valid_set = custom_datasets.discretized_cifar10.DiscreteCIFAR10(
-        config.data.valid, train=False, download=True)
+        config.data.valid, train=False, download=False)
     else:
       valid_set = get_dataset(
         config.data.valid,
