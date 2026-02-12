@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=train_cifar10
 #SBATCH --account=3261535
-#SBATCH --partition=long_gpunew
+#SBATCH --partition=long_gpu
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16gb
 #SBATCH --ntasks=1
