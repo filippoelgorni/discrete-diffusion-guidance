@@ -4,4 +4,5 @@
 __pycache__/
 .hf_cache
 outputs/
+data/
 watch_folder/
