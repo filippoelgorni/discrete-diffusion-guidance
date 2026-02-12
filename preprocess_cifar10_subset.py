@@ -75,17 +75,20 @@ def create_balanced_subset(source_dir, output_dir, fraction=0.1, categories=None
     # Save in CIFAR-10 format (batches)
     batches_dir = output_dir / 'cifar-10-batches-py'
     batches_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save single batch file (data_batch_1)
-    batch_dict = {
-        'batch_label': 'training batch',
-        'labels': subset_targets.tolist(),
-        'data': subset_data,
-        'filenames': [f'img_{i}.png' for i in range(len(subset_data))]
-    }
-    
-    with open(batches_dir / 'data_batch_1', 'wb') as f:
-        pickle.dump(batch_dict, f)
+
+    # Save five training batch files (data_batch_1..5)
+    batch_splits = np.array_split(np.arange(len(subset_data)), 5)
+    for batch_idx, batch_indices in enumerate(batch_splits, start=1):
+        batch_data = subset_data[batch_indices]
+        batch_targets = subset_targets[batch_indices]
+        batch_dict = {
+            'batch_label': f'training batch {batch_idx}',
+            'labels': batch_targets.tolist(),
+            'data': batch_data,
+            'filenames': [f'img_{i}.png' for i in batch_indices.tolist()]
+        }
+        with open(batches_dir / f'data_batch_{batch_idx}', 'wb') as f:
+            pickle.dump(batch_dict, f)
     
     # Save test set (unchanged)
     test_dataset = torchvision.datasets.CIFAR10(
@@ -103,7 +106,7 @@ def create_balanced_subset(source_dir, output_dir, fraction=0.1, categories=None
     # Save meta
     meta_dict = {
         'label_names': dataset.classes,
-        'num_cases_per_batch': 10000,
+        'num_cases_per_batch': int(max(len(x) for x in batch_splits)),
         'num_vis': 3072
     }
     

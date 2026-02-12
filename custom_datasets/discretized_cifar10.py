@@ -1,3 +1,6 @@
+import os
+import pickle
+
 import einops
 import torch
 import torchvision
@@ -39,6 +42,43 @@ class DummyVisionTokenizer:
 
 
 class DiscreteCIFAR10(torchvision.datasets.CIFAR10):
+  def _check_integrity(self):
+    batches_dir = os.path.join(self.root, self.base_folder)
+    required_files = [
+      'data_batch_1',
+      'data_batch_2',
+      'data_batch_3',
+      'data_batch_4',
+      'data_batch_5',
+      'test_batch',
+      'batches.meta',
+    ]
+    if os.path.exists(batches_dir):
+      missing = [
+        name for name in required_files
+        if not os.path.exists(os.path.join(batches_dir, name))
+      ]
+      if missing:
+        raise RuntimeError(
+          'CIFAR-10 subset missing files: '
+          + ', '.join(missing))
+      return True
+    return super()._check_integrity()
+
+  def _load_meta(self):
+    path = os.path.join(self.root, self.base_folder, self.meta['filename'])
+    if os.path.exists(path):
+      with open(path, 'rb') as infile:
+        data = pickle.load(infile, encoding='latin1')
+        self.classes = data.get('label_names')
+        if self.classes is None:
+          raise RuntimeError('Dataset metadata missing label_names.')
+        self.class_to_idx = {
+          _class: i for i, _class in enumerate(self.classes)
+        }
+      return
+    super()._load_meta()
+
   def __init__(self, root, train, **kwargs):
     super().__init__(root=root, train=train,
                      **kwargs)
