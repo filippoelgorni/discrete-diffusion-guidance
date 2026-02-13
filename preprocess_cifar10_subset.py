@@ -72,6 +72,10 @@ def create_balanced_subset(source_dir, output_dir, fraction=0.1, categories=None
     subset_data = data[selected_indices]
     subset_targets = targets[selected_indices]
     
+    # Convert to CIFAR-10 format: (N, 3072) with channels-first layout
+    # Original shape: (N, 32, 32, 3) - need to reshape to (N, 3, 32, 32) then flatten
+    subset_data = subset_data.transpose(0, 3, 1, 2).reshape(len(subset_data), -1)
+    
     # Save in CIFAR-10 format (batches)
     batches_dir = output_dir / 'cifar-10-batches-py'
     batches_dir.mkdir(parents=True, exist_ok=True)
