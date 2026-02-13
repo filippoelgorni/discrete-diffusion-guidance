@@ -21,6 +21,7 @@ from tqdm.auto import tqdm
 
 import classifier
 import dataloader
+import eval_utils
 import models
 import noise_schedule
 
@@ -167,6 +168,12 @@ class Diffusion(L.LightningModule):
 
     self.fast_forward_epochs = None
     self.fast_forward_batches = None
+
+    # For memorization metric computation during validation
+    self.reference_images = None
+    self.reference_classes = None
+    self.mem_threshold = getattr(config.eval, 'mem_threshold', 1/3)
+    self.num_f_mem_samples = getattr(config.eval, 'num_f_mem_samples', 100)
 
     self._validate_configuration()
 
@@ -851,6 +858,113 @@ class Diffusion(L.LightningModule):
               key=f"samples@global_step{self.global_step}",
               columns=['Generated Samples'],
               data=[[s] for s in decoded_samples])
+      
+      # Compute memorization metric f_mem for vision tasks
+      if (self.config.is_vision and 
+          getattr(self.config.eval, 'compute_f_mem', False)):
+        try:
+          # Load reference images organized by class if not already loaded
+          if self.reference_images is None:
+            ref_path = getattr(self.config.eval, 'reference_dir', None)
+            if ref_path is not None:
+              import os
+              from pathlib import Path
+              from PIL import Image
+              
+              # Try to load class-organized structure
+              ref_by_class = {}
+              all_refs = []
+              ref_classes = []
+              
+              for class_dir in sorted(Path(ref_path).iterdir()):
+                if class_dir.is_dir():
+                  # Class-organized structure: reference_dir/0/, reference_dir/1/, etc.
+                  try:
+                    class_id = int(class_dir.name)
+                    class_images = []
+                    for png_path in sorted(class_dir.glob('*.png')):
+                      img = Image.open(png_path)
+                      img_tensor = torch.from_numpy(
+                        np.array(img)).permute(2, 0, 1).float().to(self.device)
+                      class_images.append(img_tensor)
+                      all_refs.append(img_tensor)
+                      ref_classes.append(class_id)
+                    if class_images:
+                      ref_by_class[class_id] = torch.stack(class_images)
+                  except ValueError:
+                    # Directory name is not a number, skip
+                    pass
+              
+              # If no class structure found, load flat
+              if not ref_by_class:
+                for png_path in sorted(Path(ref_path).rglob('*.png')):
+                  img = Image.open(png_path)
+                  img_tensor = torch.from_numpy(
+                    np.array(img)).permute(2, 0, 1).float().to(self.device)
+                  all_refs.append(img_tensor)
+              
+              if all_refs:
+                self.reference_images = torch.stack(all_refs)
+                # Store class info if available
+                if ref_by_class:
+                  self.reference_classes = np.array(ref_classes)
+                else:
+                  self.reference_classes = None
+                print(f"Loaded {len(self.reference_images)} reference images from {ref_path}")
+                if ref_by_class:
+                  for cid, imgs in sorted(ref_by_class.items()):
+                    print(f"  Class {cid}: {len(imgs)} images")
+          
+          # Compute f_mem if we have reference images
+          if self.reference_images is not None:
+            # Generate samples for f_mem computation, tracking class
+            num_eval_samples = self.num_f_mem_samples
+            self.config.sampling.batch_size = 1
+            eval_samples = []
+            eval_classes = []
+            
+            # Determine if generating class-conditionally
+            num_classes = self.config.data.get('num_classes', 10)
+            is_conditional = (
+              self.config.training.guidance is not None and 
+              hasattr(self.config, 'guidance') and
+              self.config.guidance.get('method') is not None
+            )
+            
+            with torch.no_grad():
+              if is_conditional:
+                # Generate samples per class for efficiency
+                samples_per_class = max(1, num_eval_samples // num_classes)
+                for class_id in range(num_classes):
+                  self.config.guidance.condition = class_id
+                  for _ in range(samples_per_class):
+                    eval_samples.append(self.sample())
+                    eval_classes.append(class_id)
+              else:
+                # Unconditional: randomly assign to classes for per-class comparison
+                for _ in range(num_eval_samples):
+                  eval_samples.append(self.sample())
+                  eval_classes.append(np.random.randint(0, num_classes))
+            
+            eval_images = self.tokenizer.batch_decode(
+              torch.concat(eval_samples, dim=0)).float()
+            eval_images = torch.clamp(eval_images, 0, 255)
+            eval_classes_arr = np.array(eval_classes)
+            
+            # Compute f_mem with class-aware comparison
+            f_mem, _, _ = eval_utils.compute_memorization_fast(
+              eval_images,
+              self.reference_images,
+              k=self.mem_threshold,
+              generated_classes=eval_classes_arr,
+              reference_classes=getattr(self, 'reference_classes', None),
+            )
+            self.log('val/f_mem', f_mem, on_step=False, on_epoch=True, sync_dist=True)
+            print(f"f_mem at step {self.global_step}: {f_mem:.4f} ({f_mem*100:.2f}%)")
+        except Exception as e:
+          print(f"Error computing f_mem: {e}")
+          import traceback
+          traceback.print_exc()
 
   def _sample_prior(self, *batch_dims):
     if self.diffusion == 'absorbing_state':

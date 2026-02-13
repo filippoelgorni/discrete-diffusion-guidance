@@ -264,7 +264,7 @@ def save_nearest_neighbor_images(
     # Copy images and create metadata
     nn_info = []
     
-        for i, (gen_path, nn_idx, ratio) in enumerate(tqdm(
+    for i, (gen_path, nn_idx, ratio) in enumerate(tqdm(
             zip(generated_paths, nearest_indices, memorization_ratios),
             desc="Organizing images",
             total=len(generated_paths))):
