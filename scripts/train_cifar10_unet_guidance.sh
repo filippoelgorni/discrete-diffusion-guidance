@@ -72,6 +72,9 @@ MAX_STEPS=${MAX_STEPS:-300000}
 
 CHECKPOINT_EVERY_N_STEPS=${CHECKPOINT_EVERY_N_STEPS:-10000}
 
+# Optional: Set VAL_CHECK_INTERVAL for validation frequency (default: 10000)
+VAL_CHECK_INTERVAL=${VAL_CHECK_INTERVAL:-10000}
+
 echo "=============================================="
 echo "Training Configuration"
 echo "=============================================="
@@ -103,7 +106,7 @@ srun python -u -m main \
   lr_scheduler.num_warmup_steps=5000 \
   callbacks.checkpoint_every_n_steps.every_n_train_steps=${CHECKPOINT_EVERY_N_STEPS} \
   trainer.max_steps=${MAX_STEPS} \
-  trainer.val_check_interval=10_000 \
+  trainer.val_check_interval=${VAL_CHECK_INTERVAL} \
   +trainer.check_val_every_n_epoch=null \
   training.guidance.cond_dropout=0.1 \
   eval.generate_samples=True \
