@@ -35,6 +35,12 @@ if [[ "${DATASET_PATH}" != /* ]]; then
   DATASET_PATH="${REPO_ROOT}/${DATASET_PATH}"
 fi
 
+# Optional: reference images directory for f_mem
+REFERENCE_DIR=${REFERENCE_DIR:-}
+if [[ -n "${REFERENCE_DIR}" && "${REFERENCE_DIR}" != /* ]]; then
+  REFERENCE_DIR="${REPO_ROOT}/${REFERENCE_DIR}"
+fi
+
 source setup_env.sh
 export NCCL_P2P_LEVEL=NVL
 export HYDRA_FULL_ERROR=1
@@ -75,6 +81,11 @@ CHECKPOINT_EVERY_N_STEPS=${CHECKPOINT_EVERY_N_STEPS:-10000}
 # Optional: Set VAL_CHECK_INTERVAL for validation frequency (default: 10000)
 VAL_CHECK_INTERVAL=${VAL_CHECK_INTERVAL:-10000}
 
+# Optional: f_mem computation during validation
+COMPUTE_F_MEM=${COMPUTE_F_MEM:-false}
+NUM_F_MEM_SAMPLES=${NUM_F_MEM_SAMPLES:-100}
+MEM_THRESHOLD=${MEM_THRESHOLD:-0.333}
+
 echo "=============================================="
 echo "Training Configuration"
 echo "=============================================="
@@ -108,6 +119,10 @@ srun python -u -m main \
   trainer.max_steps=${MAX_STEPS} \
   trainer.val_check_interval=${VAL_CHECK_INTERVAL} \
   +trainer.check_val_every_n_epoch=null \
+  eval.compute_f_mem=${COMPUTE_F_MEM} \
+  eval.reference_dir=${REFERENCE_DIR} \
+  eval.num_f_mem_samples=${NUM_F_MEM_SAMPLES} \
+  eval.mem_threshold=${MEM_THRESHOLD} \
   training.guidance.cond_dropout=0.1 \
   eval.generate_samples=True \
   sampling.num_sample_batches=1 \
