@@ -1231,16 +1231,30 @@ class Diffusion(L.LightningModule):
     classifier_model: typing.Optional[classifier.Classifier] = None,
     cond: typing.Optional[torch.tensor] = None,
     eps: float = 1e-5,  # Note: differs from self.config.training.sampling_eps
+    x_partial: typing.Optional[torch.Tensor] = None,  # For reconstruction: partially masked input
+    scale_steps_by_mask: bool = False,  # Whether to scale steps by fraction of masked tokens
   ):
-    xt = self._sample_prior(
-      self.config.sampling.batch_size,
-      self.config.model.length
-    ).to(self.device)
+    # Initialize: either from prior (generation) or from partial input (reconstruction)
+    if x_partial is None:
+      xt = self._sample_prior(
+        self.config.sampling.batch_size,
+        self.config.model.length
+      ).to(self.device)
+      num_steps = self.config.sampling.steps
+    else:
+      xt = x_partial.clone().long()
+      if scale_steps_by_mask:
+        # For reconstruction, scale steps by fraction of masked tokens
+        mask_positions = (x_partial == self.mask_index)
+        num_masked = mask_positions.float().mean()
+        num_steps = max(1, int(self.config.sampling.steps * num_masked))
+      else:
+        num_steps = self.config.sampling.steps
 
     timesteps = torch.linspace(
-      1, eps, self.config.sampling.steps + 1, device=self.device)
-    dt = (1 - eps) / self.config.sampling.steps
-    pbar = tqdm(range(self.config.sampling.steps),
+      1, eps, num_steps + 1, device=self.device)
+    dt = (1 - eps) / num_steps
+    pbar = tqdm(range(num_steps),
                 desc='Sampling',
                 leave=False)
     NFEs = 0
