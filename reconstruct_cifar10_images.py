@@ -358,6 +358,16 @@ def main(args):
     # Reproducibility
     L.seed_everything(args.seed)
     
+    # Auto-detect device if not specified
+    if args.device is None:
+        if torch.cuda.is_available():
+            args.device = 'cuda'
+        elif torch.backends.mps.is_available():
+            args.device = 'mps'
+        else:
+            args.device = 'cpu'
+    print(f"Using device: {args.device}")
+    
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = args.output_dir if args.output_dir else f"outputs/cifar10/reconstructions/{timestamp}"
@@ -471,7 +481,8 @@ def main(args):
         
         # Clean up
         del model
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     # Summary
     print("\n" + "=" * 80)
@@ -608,8 +619,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda",
-        help="Device to use (cuda/cpu)",
+        default=None,
+        help="Device to use (cuda/mps/cpu). If not specified, auto-detects best available.",
     )
     
     args = parser.parse_args()
