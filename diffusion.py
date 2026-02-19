@@ -1030,6 +1030,51 @@ class Diffusion(L.LightningModule):
     return samples
 
   @torch.no_grad()
+  def reconstruct(
+    self,
+    x_partial: torch.Tensor,
+    eps: float = 1e-5,
+  ):
+    """Reconstruct partially masked images via diffusion.
+    
+    Args:
+      x_partial: Partially masked input tensor with some mask_index tokens.
+      eps: Noise schedule epsilon.
+    
+    Returns:
+      Reconstructed samples with masked regions filled in.
+    """
+    if not self.config.eval.disable_ema:
+      self.load_ema_params()
+    if getattr(self.config, 'guidance', None) is not None:
+      if self.config.guidance.method == 'cfg':
+        cond = (torch.ones(x_partial.shape[0], device=self.device) *
+                self.config.guidance.condition).to(torch.long)
+      else:
+        cond = None
+      if self.config.guidance.method in {'cbg', 'nos'}:
+        classifier_model = classifier.Classifier.load_from_checkpoint(
+          self.config.guidance.classifier_checkpoint_path,
+          tokenizer=self.tokenizer,
+          config=self.config, logger=False).to(self.device)
+        classifier_model.eval()
+      else:
+        classifier_model = None
+    else:
+      classifier_model, cond = None, None
+
+    samples = self._diffusion_sample(
+      classifier_model=classifier_model,
+      cond=cond,
+      eps=eps,
+      x_partial=x_partial,
+      scale_steps_by_mask=True,
+    )
+    if not self.config.eval.disable_ema:
+      self._restore_non_ema_params()
+    return samples
+
+  @torch.no_grad()
   def _ar_sample(
       self,
       classifier_model: typing.Optional[classifier.Classifier] = None,
