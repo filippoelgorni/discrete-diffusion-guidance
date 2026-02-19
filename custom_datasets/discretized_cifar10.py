@@ -32,6 +32,9 @@ class DummyVisionTokenizer:
   def __call__(self, x):
     return x
 
+  def batch_encode(self, x):
+    return einops.rearrange(x, "b c h w -> b (c h w)").to(torch.long)
+
   def batch_decode(self, x):
     return einops.rearrange(x, "b (c h w) -> b c h w", c=3,
                      h=self.image_size)
