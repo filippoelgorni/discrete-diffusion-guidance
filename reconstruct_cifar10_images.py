@@ -150,22 +150,26 @@ def encode_image_for_reconstruction(
     image_batch = image.unsqueeze(0)  # (1, 3, 32, 32)
     tokens = tokenizer.batch_encode(image_batch)  # (1, L) where L = sequence length
     
-    # Determine which tokens to mask based on spatial layout
+    # Reshape tokens to (1, C, H, W) to apply SPATIAL masking (not token-sequential masking)
     batch_size, seq_len = tokens.shape
+    tokens_3d = tokens.view(batch_size, 3, 32, 32)  # (1, 3, 32, 32)
     
-    # For CIFAR-10 tokenized spatially, assume tokens correspond to image patches
-    # Calculate how many tokens correspond to the mask percentage
-    num_tokens_to_mask = int(seq_len * mask_percentage / 100)
+    # Calculate which rows to mask spatially
+    height = 32
+    num_rows_to_mask = int(height * mask_percentage / 100)
     
-    # Create partial tokens
-    partial_tokens = tokens.clone()
+    # Apply mask spatially (same rows across all channels)
+    partial_tokens_3d = tokens_3d.clone()
     
     if mask_from_bottom:
-        # Mask last tokens (bottom portion)
-        partial_tokens[:, -num_tokens_to_mask:] = tokenizer.mask_token_id
+        # Mask bottom rows across ALL channels
+        partial_tokens_3d[:, :, height - num_rows_to_mask:, :] = tokenizer.mask_token_id
     else:
-        # Mask first tokens (top portion)
-        partial_tokens[:, :num_tokens_to_mask] = tokenizer.mask_token_id
+        # Mask top rows across ALL channels
+        partial_tokens_3d[:, :, :num_rows_to_mask, :] = tokenizer.mask_token_id
+    
+    # Flatten back to sequence
+    partial_tokens = partial_tokens_3d.view(batch_size, seq_len)
     
     return partial_tokens
 
@@ -281,16 +285,8 @@ def main(args):
     save_image(original_image, original_path)
     print(f"Original image saved: {original_path}")
     
-    # Create masked visualization
-    print(f"\n=== Creating masked image ({args.mask_percentage}% masked) ===")
-    masked_visualization = create_partial_mask(
-        original_image,
-        mask_percentage=args.mask_percentage,
-        mask_from_bottom=args.mask_from_bottom,
-    )
-    masked_vis_path = os.path.join(output_dir, "01_masked.png")
-    save_image(masked_visualization, masked_vis_path)
-    print(f"Masked visualization saved: {masked_vis_path}")
+    # We'll create the masked visualization after encoding to ensure consistency
+    # (so the visualization matches exactly what the model sees)
     
     # Process each checkpoint
     print(f"\n=== Processing {len(args.checkpoints)} checkpoint(s) ===")
@@ -324,6 +320,21 @@ def main(args):
             eps=args.eps,
         )
         
+        # Create masked visualization from actual tokens (only once, for first checkpoint)
+        if i == 0:
+            print(f"\n=== Creating masked visualization from actual tokens ===")
+            # Decode the masked tokens to see what the model actually sees
+            # (masked tokens will decode to their values, we visualize by setting mask_token positions to 0)
+            partial_tokens_vis = partial_tokens.clone()
+            partial_tokens_vis[partial_tokens_vis == model.tokenizer.mask_token_id] = 0
+            masked_visualization = model.tokenizer.batch_decode(partial_tokens_vis).float()
+            masked_visualization = torch.clamp(masked_visualization, 0, 255).squeeze(0)
+            
+            masked_vis_path = os.path.join(output_dir, "01_masked.png")
+            save_image(masked_visualization, masked_vis_path)
+            print(f"Masked visualization saved: {masked_vis_path}")
+            print(f"  (Generated from actual masked tokens to ensure consistency)")
+        
         # Save reconstructed image
         checkpoint_name = os.path.splitext(os.path.basename(checkpoint_path))[0]
         run_name = os.path.basename(os.path.dirname(os.path.dirname(checkpoint_path)))
@@ -343,7 +354,7 @@ def main(args):
     print("RECONSTRUCTION COMPLETE")
     print("=" * 80)
     print(f"Original image: {original_path}")
-    print(f"Masked visualization: {masked_vis_path}")
+    print(f"Masked visualization: {os.path.join(output_dir, '01_masked.png')}")
     print(f"Output directory: {output_dir}")
     print(f"Total reconstructions: {len(args.checkpoints)}")
     print("=" * 80)
