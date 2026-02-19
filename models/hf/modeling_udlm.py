@@ -5,8 +5,12 @@ import math
 import typing
 
 import einops
-import flash_attn
-import flash_attn.layers.rotary
+try:
+  import flash_attn
+  import flash_attn.layers.rotary
+  HAS_FLASH_ATTN = True
+except ImportError:
+  HAS_FLASH_ATTN = False
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -115,6 +119,10 @@ def rotate_half(x):
 
 
 def apply_rotary_pos_emb(qkv, cos, sin):
+	if not HAS_FLASH_ATTN:
+		raise ImportError(
+			"flash_attn is required for UDLM models but is not installed. "
+			"Install it with: pip install flash-attn (requires CUDA/GPU)")
 	cos = cos[0,:,0,0,:cos.shape[-1]//2]
 	sin = sin[0,:,0,0,:sin.shape[-1]//2]
 	return flash_attn.layers.rotary.apply_rotary_emb_qkv_(qkv, cos, sin)

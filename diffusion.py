@@ -15,7 +15,10 @@ import torch
 import torch.nn.functional as F
 import torchmetrics
 import transformers
-from mamba_ssm.utils.generation import InferenceParams
+try:
+  from mamba_ssm.utils.generation import InferenceParams
+except ImportError:
+  InferenceParams = None  # Only needed for DiMamba models
 from torch import Tensor
 from tqdm.auto import tqdm
 import pandas as pd
@@ -1105,6 +1108,10 @@ class Diffusion(L.LightningModule):
       noise = noise.to(torch.float64)
     pbar = tqdm(range(num_pred_tokens), desc='AR Sampling',
                   leave=False)
+    if InferenceParams is None and self.config.backbone == 'dimamba':
+      raise ImportError(
+        "mamba_ssm is required for DiMamba models but is not installed. "
+        "Install it with: pip install mamba-ssm (requires CUDA/GPU)")
     inference_params = InferenceParams(
       max_seqlen=num_pred_tokens,
       max_batch_size=x.shape[0],

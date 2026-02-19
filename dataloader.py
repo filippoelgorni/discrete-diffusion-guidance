@@ -232,7 +232,7 @@ def _group_texts(examples, block_size, bos, eos,
 
 def get_dataset(
     dataset_name, tokenizer, wrap, mode, cache_dir,
-    block_size=1024, num_proc=len(os.sched_getaffinity(0)),
+    block_size=1024, num_proc=os.cpu_count() or 1,
     streaming=False, override_cache=False,
     add_special_tokens=True,
     label_col=None, label_threshold=None):

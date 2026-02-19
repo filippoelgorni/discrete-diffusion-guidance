@@ -1,8 +1,12 @@
 import math
 import typing
 
-import flash_attn
-import flash_attn.layers.rotary
+try:
+  import flash_attn
+  import flash_attn.layers.rotary
+  HAS_FLASH_ATTN = True
+except ImportError:
+  HAS_FLASH_ATTN = False
 import huggingface_hub
 import omegaconf
 import torch
@@ -114,6 +118,10 @@ def rotate_half(x):
 
 
 def apply_rotary_pos_emb(qkv, cos, sin):
+  if not HAS_FLASH_ATTN:
+    raise ImportError(
+      "flash_attn is required for DiT models but is not installed. "
+      "Install it with: pip install flash-attn (requires CUDA/GPU)")
   cos = cos[0,:,0,0,:cos.shape[-1]//2]
   sin = sin[0,:,0,0,:sin.shape[-1]//2]
   return flash_attn.layers.rotary.apply_rotary_emb_qkv_(qkv,
@@ -298,6 +306,10 @@ class DDiTBlock(nn.Module):
         dtype=torch.int32, device=qkv.device)
     else:
       cu_seqlens = seqlens.cumsum(-1)
+    if not HAS_FLASH_ATTN:
+      raise ImportError(
+        "flash_attn is required for DiT models but is not installed. "
+        "Install it with: pip install flash-attn (requires CUDA/GPU)")
     x = flash_attn.flash_attn_interface.flash_attn_varlen_qkvpacked_func(
       qkv, cu_seqlens, seq_len, 0., causal=self.causal)
 

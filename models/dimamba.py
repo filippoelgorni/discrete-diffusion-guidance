@@ -7,15 +7,23 @@ import omegaconf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from causal_conv1d import (
-  causal_conv1d_fn,
-  causal_conv1d_update,
-)
+try:
+  from causal_conv1d import (
+    causal_conv1d_fn,
+    causal_conv1d_update,
+  )
+except ImportError:
+  causal_conv1d_fn = None
+  causal_conv1d_update = None
 from einops import rearrange, repeat
-from mamba_ssm.ops.selective_scan_interface import (
-  mamba_inner_fn,
-  selective_scan_fn,
-)
+try:
+  from mamba_ssm.ops.selective_scan_interface import (
+    mamba_inner_fn,
+    selective_scan_fn,
+  )
+except ImportError:
+  mamba_inner_fn = None
+  selective_scan_fn = None
 from torch import Tensor
 from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import (
@@ -36,10 +44,16 @@ except ImportError:
     )
   except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
-from mamba_ssm.ops.triton.selective_state_update import (
-  selective_state_update,
-)
-from mamba_ssm.utils.generation import InferenceParams
+try:
+  from mamba_ssm.ops.triton.selective_state_update import (
+    selective_state_update,
+  )
+except ImportError:
+  selective_state_update = None
+try:
+  from mamba_ssm.utils.generation import InferenceParams
+except ImportError:
+  InferenceParams = None
 
 from models.dit import (
   LabelEmbedder,
