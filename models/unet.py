@@ -457,7 +457,7 @@ class UNet(nn.Module):
         bin_centers = torch.linspace(start=-1. + bin_width/2,
             end=1. - bin_width/2,
             steps=S,
-            device='cuda').view(1, 1, 1, 1, S)
+            device=mu.device).view(1, 1, 1, 1, S)
 
         sig_in_left = (bin_centers - bin_width/2 - mu) * inv_scale
         bin_left_logcdf = F.logsigmoid(sig_in_left)

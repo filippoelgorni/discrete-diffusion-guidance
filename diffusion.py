@@ -351,7 +351,8 @@ class Diffusion(L.LightningModule):
   def forward(self, x, sigma, cond=None, x_emb=None, **kwargs):
     """Returns log_probs / logits."""
     sigma = self._process_sigma(sigma)
-    with torch.cuda.amp.autocast(dtype=torch.float32):
+    device_type = x.device.type if x.device.type != 'mps' else 'cpu'  # MPS not supported by autocast
+    with torch.amp.autocast(device_type=device_type, dtype=torch.float32):
       logits = self.backbone(x, sigma, cond, x_emb=x_emb, **kwargs)
 
     if self.parameterization == 'subs':
@@ -1762,7 +1763,8 @@ class Diffusion(L.LightningModule):
     copy_flag = (xt != self.mask_index).to(torch.bool)
     with torch.no_grad():
       time_conditioning = self._process_sigma(time_conditioning)
-      with torch.cuda.amp.autocast(dtype=torch.float32):
+      device_type = xt.device.type if xt.device.type != 'mps' else 'cpu'
+      with torch.amp.autocast(device_type=device_type, dtype=torch.float32):
         logits, hidden_states = self.backbone(
           xt, time_conditioning, cond=None,
           return_hidden_states=True)
@@ -1805,7 +1807,8 @@ class Diffusion(L.LightningModule):
         h_current = hidden_states[-1] + delta
         target_loss = classifier_model.get_log_probs(
           xt, time_conditioning, x_emb=h_current)[..., conditioning_class].sum()
-        with torch.cuda.amp.autocast(dtype=torch.float32):
+        device_type = xt.device.type if xt.device.type != 'mps' else 'cpu'
+        with torch.amp.autocast(device_type=device_type, dtype=torch.float32):
           new_logits = self.forward(xt, time_conditioning,
                                     cond=None,
                                     x_emb=h_current)
@@ -1829,7 +1832,8 @@ class Diffusion(L.LightningModule):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    with torch.cuda.amp.autocast(dtype=torch.float32):
+    device_type = xt.device.type if xt.device.type != 'mps' else 'cpu'
+    with torch.amp.autocast(device_type=device_type, dtype=torch.float32):
       guided_logits = self.forward(
         xt, time_conditioning,
         cond=None,
