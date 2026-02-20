@@ -1068,7 +1068,7 @@ class Diffusion(L.LightningModule):
       cond=cond,
       eps=eps,
       x_partial=x_partial,
-      scale_steps_by_mask=True,
+      scale_steps_by_mask=False,  # Use full steps for better reconstruction quality
     )
     if not self.config.eval.disable_ema:
       self._restore_non_ema_params()
@@ -1286,19 +1286,28 @@ class Diffusion(L.LightningModule):
         self.config.model.length
       ).to(self.device)
       num_steps = self.config.sampling.steps
+      t_start = 1.0  # Start from full noise
     else:
       xt = x_partial.clone().long()
+      
+      # Calculate mask fraction to determine starting noise level
+      mask_positions = (x_partial == self.mask_index)
+      mask_fraction = mask_positions.float().mean()
+      
+      # Start at intermediate noise level based on mask fraction
+      # Unmasked tokens are already clean, masked tokens should start at noise level proportional to mask_fraction
+      # Full mask (100%) -> t_start = 1.0 (full noise), No mask (0%) -> t_start = eps (nearly clean)
+      t_start = mask_fraction * (1.0 - eps) + eps
+      
       if scale_steps_by_mask:
         # For reconstruction, scale steps by fraction of masked tokens
-        mask_positions = (x_partial == self.mask_index)
-        num_masked = mask_positions.float().mean()
-        num_steps = max(1, int(self.config.sampling.steps * num_masked))
+        num_steps = max(1, int(self.config.sampling.steps * mask_fraction))
       else:
         num_steps = self.config.sampling.steps
 
     timesteps = torch.linspace(
-      1, eps, num_steps + 1, device=self.device)
-    dt = (1 - eps) / num_steps
+      t_start, eps, num_steps + 1, device=self.device)
+    dt = (t_start - eps) / num_steps
     pbar = tqdm(range(num_steps),
                 desc='Sampling',
                 leave=False)
