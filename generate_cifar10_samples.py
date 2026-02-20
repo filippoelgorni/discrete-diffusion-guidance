@@ -30,6 +30,16 @@ import dataloader
 import diffusion
 
 
+def get_device():
+    """Auto-detect available device: CUDA -> MPS -> CPU."""
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        return torch.device('mps')
+    else:
+        return torch.device('cpu')
+
+
 def generate_samples(
     model: diffusion.Diffusion,
     num_samples: int,
@@ -202,7 +212,18 @@ def main(args):
         config=config,
         strict=False,
     )
-    model = model.to('cuda')
+    device = get_device()
+    print(f"Using device: {device}")
+    try:
+        model = model.to(device)
+    except (RuntimeError, TypeError) as e:
+        if 'mps' in str(e).lower() or 'float64' in str(e).lower():
+            print(f"Device compatibility issue: {e}")
+            print("Falling back to CPU...")
+            model = model.to('cpu')
+            device = torch.device('cpu')
+        else:
+            raise
     model.eval()
     
     # Log model state

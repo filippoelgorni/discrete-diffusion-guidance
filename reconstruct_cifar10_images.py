@@ -218,6 +218,7 @@ def encode_image_for_reconstruction(
     tokenizer,
     mask_type: str = 'partial',
     mask_from_bottom: bool = True,
+    debug: bool = False,
 ) -> torch.Tensor:
     """Encode image into token space with masking for reconstruction.
     
@@ -235,6 +236,14 @@ def encode_image_for_reconstruction(
     # Encode full image to tokens
     image_batch = image.unsqueeze(0)  # (1, 3, 32, 32)
     tokens = tokenizer.batch_encode(image_batch)  # (1, L) where L = sequence length
+    
+    if debug:
+        print(f"\n=== Token Encoding Debug ===")
+        print(f"Full image tokens (before masking):")
+        print(f"  Shape: {tokens.shape}")
+        print(f"  Min: {tokens.min().item()}, Max: {tokens.max().item()}")
+        print(f"  Mean: {tokens.float().mean().item():.2f}, Median: {tokens.float().median().item():.2f}")
+        print(f"  Tokens: {tokens.tolist()}")
     
     # Reshape tokens to (1, C, H, W) to apply SPATIAL masking (not token-sequential masking)
     batch_size, seq_len = tokens.shape
@@ -266,6 +275,28 @@ def encode_image_for_reconstruction(
     # Flatten back to sequence
     partial_tokens = partial_tokens_3d.view(batch_size, seq_len)
     
+    if debug:
+        mask_id = tokenizer.mask_token_id
+        mask_count = (partial_tokens == mask_id).sum().item()
+        unmasked = partial_tokens[partial_tokens != mask_id]
+        
+        print(f"\nAfter applying {mask_percentage}% mask:")
+        print(f"  Mask token ID: {mask_id}")
+        print(f"  Masked tokens: {mask_count}/{seq_len} ({100*mask_count/seq_len:.1f}%)")
+        print(f"  Unmasked tokens - Min: {unmasked.min().item()}, Max: {unmasked.max().item()}")
+        print(f"  Unmasked tokens - Mean: {unmasked.float().mean().item():.2f}, Median: {unmasked.float().median().item():.2f}")
+        print(f"  Tokens {partial_tokens.tolist()}")
+        
+        # Show token value distribution
+        unmasked_vals, counts = torch.unique(unmasked, return_counts=True)
+        print(f"\n  Token value distribution (showing top 20):")
+        sorted_idx = torch.argsort(counts, descending=True)[:20]
+        for idx in sorted_idx:
+            val = unmasked_vals[idx].item()
+            cnt = counts[idx].item()
+            pct = 100 * cnt / unmasked.numel()
+            print(f"    Token {val:3d}: {cnt:4d} occurrences ({pct:5.2f}%)")
+    
     return partial_tokens
 
 
@@ -273,6 +304,8 @@ def reconstruct_image(
     model: diffusion.Diffusion,
     partial_tokens: torch.Tensor,
     eps: float = 1e-5,
+    mask_token_fill: typing.Optional[int] = None,
+    log_token_stats: bool = False,
 ) -> torch.Tensor:
     """Reconstruct image from partial tokens.
     
@@ -286,8 +319,39 @@ def reconstruct_image(
     """
     model.eval()
     with torch.no_grad():
-        # Reconstruct
+        # Reconstruct - uses config.sampling.steps for full quality
+        # (scale_steps_by_mask will scale by fraction of masked tokens)
         reconstructed_tokens = model.reconstruct(partial_tokens, eps=eps)
+
+        if log_token_stats:
+            mask_id = getattr(model.tokenizer, 'mask_token_id', None)
+            token_min = int(reconstructed_tokens.min().item())
+            token_max = int(reconstructed_tokens.max().item())
+            token_mean = float(reconstructed_tokens.float().mean().item())
+            token_median = float(reconstructed_tokens.float().median().item())
+            out_of_range = (
+                (reconstructed_tokens < 0)
+                | (reconstructed_tokens > 255)
+            ).sum().item()
+            if mask_id is not None:
+                mask_count = (reconstructed_tokens == mask_id).sum().item()
+                print(
+                    f"Reconstruction token stats: min={token_min}, max={token_max}, "
+                    f"mean={token_mean:.2f}, median={token_median:.2f}, "
+                    f"mask_count={mask_count}, out_of_range={out_of_range}"
+                )
+            else:
+                print(
+                    f"Reconstruction token stats: min={token_min}, max={token_max}, "
+                    f"mean={token_mean:.2f}, median={token_median:.2f}, "
+                    f"out_of_range={out_of_range}"
+                )
+
+        if mask_token_fill is not None:
+            mask_id = getattr(model.tokenizer, 'mask_token_id', None)
+            if mask_id is not None:
+                reconstructed_tokens = reconstructed_tokens.clone()
+                reconstructed_tokens[reconstructed_tokens == mask_id] = mask_token_fill
         
         # Decode to image
         reconstructed_image = model.tokenizer.batch_decode(reconstructed_tokens).float()
@@ -310,6 +374,23 @@ def save_image(image: torch.Tensor, path: str):
     pil_img.save(path)
 
 
+def _region_stats(name: str, image: torch.Tensor, mask: torch.Tensor):
+    masked_vals = image[mask]
+    if masked_vals.numel() == 0:
+        print(f"{name}: no pixels selected")
+        return
+    stats = {
+        'min': float(masked_vals.min().item()),
+        'max': float(masked_vals.max().item()),
+        'mean': float(masked_vals.mean().item()),
+        'median': float(masked_vals.median().item()),
+    }
+    print(
+        f"{name}: min={stats['min']:.2f}, max={stats['max']:.2f}, "
+        f"mean={stats['mean']:.2f}, median={stats['median']:.2f}"
+    )
+
+
 def get_class_name(label: int) -> str:
     """Get CIFAR-10 class name."""
     class_names = [
@@ -319,8 +400,28 @@ def get_class_name(label: int) -> str:
     return class_names[label]
 
 
-def load_model(checkpoint_path: str, device: str = 'cuda') -> diffusion.Diffusion:
-    """Load model from checkpoint."""
+def load_model(
+    checkpoint_path: str,
+    device: str = 'cuda',
+    use_cfg: bool = False,
+    cfg_condition: typing.Optional[int] = None,
+    cfg_gamma: float = 1.0,
+    sampling_steps: typing.Optional[int] = None,
+) -> typing.Tuple[diffusion.Diffusion, str]:
+    """Load model from checkpoint.
+    
+    Args:
+        checkpoint_path: Path to model checkpoint
+        device: Device to load model on
+        use_cfg: Whether to use classifier-free guidance
+        cfg_condition: Class condition for CFG (0-9 for CIFAR-10)
+        cfg_gamma: Guidance strength (0=unconditional, 1=conditional, >1=stronger guidance)
+        sampling_steps: Override for number of sampling steps
+    
+    Returns:
+        model: Loaded diffusion model
+        device: Actual device used (may differ from input if fallback occurs)
+    """
     # Get config path
     checkpoint_dir = os.path.dirname(os.path.dirname(checkpoint_path))
     config_path = os.path.join(checkpoint_dir, ".hydra", "config.yaml")
@@ -334,11 +435,32 @@ def load_model(checkpoint_path: str, device: str = 'cuda') -> diffusion.Diffusio
     # Load config
     config = omegaconf.OmegaConf.load(config_path)
     
+    # Configure guidance if requested
+    if use_cfg:
+        if cfg_condition is None:
+            raise ValueError("cfg_condition must be specified when use_cfg=True")
+        print(f"\n=== Configuring CFG guidance ===")
+        print(f"  Method: cfg")
+        print(f"  Condition: {cfg_condition}")
+        print(f"  Gamma: {cfg_gamma}")
+        guidance_config = {
+            'method': 'cfg',
+            'condition': cfg_condition,
+            'gamma': cfg_gamma
+        }
+        omegaconf.OmegaConf.update(config, key='guidance', value=guidance_config, force_add=True)
+    
     # Ensure eval settings
     if not hasattr(config, 'eval'):
         config.eval = omegaconf.DictConfig({})
     if not hasattr(config.eval, 'disable_ema'):
         config.eval.disable_ema = False
+
+    # Override sampling steps if requested
+    if sampling_steps is not None:
+        if sampling_steps < 1:
+            raise ValueError("sampling_steps must be >= 1")
+        config.sampling.steps = sampling_steps
     
     # Load tokenizer and model
     tokenizer = dataloader.get_tokenizer(config)
@@ -348,10 +470,21 @@ def load_model(checkpoint_path: str, device: str = 'cuda') -> diffusion.Diffusio
         config=config,
         strict=False,
     )
-    model = model.to(device)
+    
+    # Try to move to device, fall back to CPU if MPS has dtype issues
+    try:
+        model = model.to(device)
+    except (TypeError, RuntimeError) as e:
+        if 'MPS' in str(e) and 'float64' in str(e):
+            print(f"Warning: MPS doesn't support float64. Falling back to CPU.")
+            device = 'cpu'
+            model = model.to(device)
+        else:
+            raise
+    
     model.eval()
     
-    return model
+    return model, device
 
 
 def main(args):
@@ -439,20 +572,40 @@ def main(args):
             tokenizer=model.tokenizer,
             mask_type=args.mask_type,
             mask_from_bottom=args.mask_from_bottom,
+            debug=args.debug_encoding,
         )
-        partial_tokens = partial_tokens.to(args.device)
+        partial_tokens = partial_tokens.to(actual_device)
         
         print(f"Token shape: {partial_tokens.shape}")
         num_masked = (partial_tokens == model.tokenizer.mask_token_id).sum().item()
         print(f"Number of masked tokens: {num_masked}/{partial_tokens.numel()}")
         
         # Reconstruct
-        print("Reconstructing...")
+        print(f"Reconstructing (using {model.config.sampling.steps} sampling steps)...")
         reconstructed_image = reconstruct_image(
             model,
             partial_tokens,
             eps=args.eps,
+            mask_token_fill=args.mask_token_fill,
+            log_token_stats=args.debug_tokens,
         )
+
+        if args.debug_tokens:
+            height = original_image.shape[1]
+            num_rows_to_mask = int(height * args.mask_percentage / 100)
+            if args.mask_from_bottom:
+                masked_rows = slice(height - num_rows_to_mask, height)
+            else:
+                masked_rows = slice(0, num_rows_to_mask)
+            mask = torch.zeros_like(original_image, dtype=torch.bool)
+            mask[:, masked_rows, :] = True
+            unmask = ~mask
+            print("Region stats (original image)")
+            _region_stats("  masked region", original_image, mask)
+            _region_stats("  unmasked region", original_image, unmask)
+            print("Region stats (reconstructed image)")
+            _region_stats("  masked region", reconstructed_image, mask)
+            _region_stats("  unmasked region", reconstructed_image, unmask)
         
         # Create masked visualization from actual tokens (only once, for first checkpoint)
         if i == 0:
@@ -592,6 +745,12 @@ if __name__ == "__main__":
         default=1e-5,
         help="Noise schedule epsilon",
     )
+    parser.add_argument(
+        "--sampling-steps",
+        type=int,
+        default=None,
+        help="Override number of sampling steps (uses config default if not set)",
+    )
     
     # Output
     parser.add_argument(
@@ -610,6 +769,22 @@ if __name__ == "__main__":
     )
     
     # Other
+    parser.add_argument(
+        "--debug-tokens",
+        action="store_true",
+        help="Print token statistics after reconstruction",
+    )
+    parser.add_argument(
+        "--debug-encoding",
+        action="store_true",
+        help="Print detailed token statistics during encoding",
+    )
+    parser.add_argument(
+        "--mask-token-fill",
+        type=int,
+        default=None,
+        help="Replace mask tokens with this value (0-255) before decoding",
+    )
     parser.add_argument(
         "--seed",
         type=int,
@@ -636,6 +811,8 @@ if __name__ == "__main__":
         parser.error("--image-label must be an integer")
     if not 0 <= args.mask_percentage <= 100:
         parser.error("--mask-percentage must be in range [0, 100]")
+    if args.mask_token_fill is not None and not 0 <= args.mask_token_fill <= 255:
+        parser.error("--mask-token-fill must be in range [0, 255]")
     
     # Verify checkpoints exist
     for ckpt in args.checkpoints:
