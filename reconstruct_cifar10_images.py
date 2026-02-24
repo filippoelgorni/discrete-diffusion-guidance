@@ -1,20 +1,28 @@
-"""Reconstruct partially masked CIFAR-10 images using trained models.
+"""Reconstruct partially masked images using trained models.
 
-This script loads CIFAR-10 images, masks a portion (default: bottom half),
-and reconstructs them using one or more trained checkpoints.
+This script loads images (from CIFAR-10 dataset or custom PNG files),
+masks a portion (default: bottom half), and reconstructs them using
+one or more trained checkpoints.
 
 Usage:
-    # Reconstruct a specific image
+    # Reconstruct a specific CIFAR-10 image
     python reconstruct_cifar10_images.py \
         --checkpoints outputs/cifar10/run1/checkpoints/last.ckpt \
         --index 42 \
         --mask-percentage 50 \
         --output-dir outputs/cifar10/reconstructions
 
-    # Reconstruct random image from specific class
+    # Reconstruct random image from specific CIFAR-10 class
     python reconstruct_cifar10_images.py \
         --checkpoints outputs/cifar10/run1/checkpoints/last.ckpt \
         --category 3 \
+        --mask-percentage 50
+
+    # Reconstruct custom PNG image
+    python reconstruct_cifar10_images.py \
+        --checkpoints outputs/cifar10/run1/checkpoints/last.ckpt \
+        --image-path path/to/image.png \
+        --image-label 5 \
         --mask-percentage 50
 
     # Multiple checkpoints
@@ -95,6 +103,45 @@ def load_cifar10_image(
     return img_tensor, label
 
 
+def load_image_from_path(
+    image_path: str,
+    label: typing.Optional[int] = None,
+) -> typing.Tuple[torch.Tensor, typing.Optional[int]]:
+    """Load an image from a PNG file path.
+    
+    Args:
+        image_path: Path to PNG image file
+        label: Optional class label (0-9 for CIFAR-10, or any int)
+    
+    Returns:
+        image: Image tensor (3, H, W) in range [0, 255]
+        label: Class label if provided, None otherwise
+    
+    Raises:
+        FileNotFoundError: If image file doesn't exist
+        ValueError: If image cannot be loaded or doesn't have 3 channels
+    """
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image file not found: {image_path}")
+    
+    # Load image with PIL
+    img = Image.open(image_path)
+    
+    # Convert to RGB if needed (handles RGBA, grayscale, etc.)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    
+    # Convert to tensor (3, H, W) in range [0, 255]
+    img_array = np.array(img)  # (H, W, 3)
+    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float()  # (3, H, W)
+    
+    label_str = f", label={label}" if label is not None else ""
+    print(f"Loaded image from: {image_path}")
+    print(f"  Shape: {img_tensor.shape}, dtype: {img_tensor.dtype}, range: [{img_tensor.min():.1f}, {img_tensor.max():.1f}]{label_str}")
+    
+    return img_tensor, label
+
+
 def create_partial_mask(
     image: torch.Tensor,
     mask_percentage: float,
@@ -129,19 +176,58 @@ def create_partial_mask(
     return masked_image
 
 
+def create_random_mask(
+    image: torch.Tensor,
+    mask_percentage: float,
+) -> torch.Tensor:
+    """Create a randomly masked image tensor suitable for reconstruction.
+    
+    Masks pixels at random positions, but maintains the same mask pattern
+    across all channels (i.e., if pixel (h, w) is masked, it's masked for
+    all 3 color channels).
+    
+    Args:
+        image: Image tensor (3, 32, 32) in range [0, 255]
+        mask_percentage: Percentage of image pixels to mask (0-100)
+    
+    Returns:
+        masked_image: Tensor (3, 32, 32) with randomly masked pixels set to black (0)
+    """
+    if not 0 <= mask_percentage <= 100:
+        raise ValueError(f"mask_percentage must be in [0, 100], got {mask_percentage}")
+    
+    masked_image = image.clone()
+    _, height, width = image.shape
+    
+    # Calculate total number of pixels to mask
+    total_pixels = height * width
+    num_pixels_to_mask = int(total_pixels * mask_percentage / 100)
+    
+    # Create random mask for spatial positions (H, W)
+    spatial_mask = torch.rand(height, width) < (mask_percentage / 100)
+    
+    # Apply same mask across all channels
+    masked_image[:, spatial_mask] = 0
+    
+    return masked_image
+
+
 def encode_image_for_reconstruction(
     image: torch.Tensor,
     mask_percentage: float,
     tokenizer,
+    mask_type: str = 'partial',
     mask_from_bottom: bool = True,
 ) -> torch.Tensor:
-    """Encode image into token space with partial masking for reconstruction.
+    """Encode image into token space with masking for reconstruction.
     
     Args:
         image: Image tensor (3, 32, 32) in range [0, 255]
         mask_percentage: Percentage of image to mask (0-100)
         tokenizer: Tokenizer for encoding
-        mask_from_bottom: If True, mask bottom portion; if False, mask top portion
+        mask_type: Type of masking - 'partial' (bottom/top half) or 'random' (random pixels)
+        mask_from_bottom: If True, mask bottom portion; if False, mask top portion (only for 'partial')
+        debug: If True, print detailed token statistics
     
     Returns:
         partial_tokens: Encoded tensor with some positions set to mask_index
@@ -154,19 +240,28 @@ def encode_image_for_reconstruction(
     batch_size, seq_len = tokens.shape
     tokens_3d = tokens.view(batch_size, 3, 32, 32)  # (1, 3, 32, 32)
     
-    # Calculate which rows to mask spatially
-    height = 32
-    num_rows_to_mask = int(height * mask_percentage / 100)
-    
-    # Apply mask spatially (same rows across all channels)
+    # Apply mask spatially (same mask across all channels)
     partial_tokens_3d = tokens_3d.clone()
     
-    if mask_from_bottom:
-        # Mask bottom rows across ALL channels
-        partial_tokens_3d[:, :, height - num_rows_to_mask:, :] = tokenizer.mask_token_id
+    if mask_type == 'partial':
+        # Calculate which rows to mask
+        height = 32
+        num_rows_to_mask = int(height * mask_percentage / 100)
+        
+        if mask_from_bottom:
+            # Mask bottom rows across ALL channels
+            partial_tokens_3d[:, :, height - num_rows_to_mask:, :] = tokenizer.mask_token_id
+        else:
+            # Mask top rows across ALL channels
+            partial_tokens_3d[:, :, :num_rows_to_mask, :] = tokenizer.mask_token_id
+    elif mask_type == 'random':
+        # Create random mask
+        height, width = 32, 32
+        spatial_mask = torch.rand(height, width) < (mask_percentage / 100)
+        # Apply same mask across all channels
+        partial_tokens_3d[:, :, spatial_mask] = tokenizer.mask_token_id
     else:
-        # Mask top rows across ALL channels
-        partial_tokens_3d[:, :, :num_rows_to_mask, :] = tokenizer.mask_token_id
+        raise ValueError(f"mask_type must be 'partial' or 'random', got {mask_type}")
     
     # Flatten back to sequence
     partial_tokens = partial_tokens_3d.view(batch_size, seq_len)
@@ -272,13 +367,30 @@ def main(args):
     print("CIFAR-10 IMAGE RECONSTRUCTION")
     print("=" * 80)
     
-    # Load CIFAR-10 image
-    print("\n=== Loading CIFAR-10 image ===")
-    original_image, label = load_cifar10_image(
-        index=args.index,
-        category=args.category,
-        data_dir=args.data_dir,
-    )
+    # Load image
+    print("\n=== Loading image ===")
+    if args.image_path:
+        original_image, label = load_image_from_path(
+            image_path=args.image_path,
+            label=args.image_label,
+        )
+    else:
+        original_image, label = load_cifar10_image(
+            index=args.index,
+            category=args.category,
+            data_dir=args.data_dir,
+        )
+    
+    # Determine if CFG should be used (enabled if label is provided)
+    use_cfg = label is not None
+    
+    # Display guidance settings
+    if use_cfg:
+        print(f"\nCFG Guidance: ENABLED (label provided)")
+        print(f"  Gamma (guidance strength): {args.cfg_gamma}")
+        print(f"  Condition will be set to original image's class")
+    else:
+        print("\nCFG Guidance: DISABLED (no label provided)")
     
     # Save original image
     original_path = os.path.join(output_dir, "00_original.png")
@@ -295,15 +407,27 @@ def main(args):
         print(f"\n--- Checkpoint {i + 1}/{len(args.checkpoints)} ---")
         print(f"Path: {checkpoint_path}")
         
-        # Load model
-        model = load_model(checkpoint_path, device=args.device)
+        # Load model with guidance (use original image's label as condition if available)
+        model, actual_device = load_model(
+            checkpoint_path,
+            device=args.device,
+            use_cfg=use_cfg,
+            cfg_condition=label,  # Use the original image's class as guidance
+            cfg_gamma=args.cfg_gamma,
+            sampling_steps=args.sampling_steps,
+        )
+        
+        if use_cfg and label is not None:
+            class_name = get_class_name(label) if label < 10 else "custom"
+            print(f"Using CFG guidance with class {label} ({class_name}), gamma={args.cfg_gamma}")
         
         # Encode image with masking
-        print(f"Encoding image with {args.mask_percentage}% masking...")
+        print(f"Encoding image with {args.mask_percentage}% {args.mask_type} masking...")
         partial_tokens = encode_image_for_reconstruction(
             original_image,
             mask_percentage=args.mask_percentage,
             tokenizer=model.tokenizer,
+            mask_type=args.mask_type,
             mask_from_bottom=args.mask_from_bottom,
         )
         partial_tokens = partial_tokens.to(args.device)
@@ -354,7 +478,24 @@ def main(args):
     print("RECONSTRUCTION COMPLETE")
     print("=" * 80)
     print(f"Original image: {original_path}")
+    if label is not None:
+        class_name = get_class_name(label) if label < 10 else "custom"
+        print(f"  Class: {label} ({class_name})")
+    else:
+        print(f"  Class: not specified")
     print(f"Masked visualization: {os.path.join(output_dir, '01_masked.png')}")
+    print(f"  Mask type: {args.mask_type}")
+    print(f"  Mask percentage: {args.mask_percentage}%")
+    if args.mask_type == 'partial':
+        print(f"  Mask direction: {'bottom' if args.mask_from_bottom else 'top'}")
+    if use_cfg:
+        print(f"CFG Guidance: ENABLED")
+        if label is not None:
+            class_name = get_class_name(label) if label < 10 else "custom"
+            print(f"  Condition: {label} ({class_name})")
+        print(f"  Gamma: {args.cfg_gamma}")
+    else:
+        print(f"CFG Guidance: DISABLED")
     print(f"Output directory: {output_dir}")
     print(f"Total reconstructions: {len(args.checkpoints)}")
     print("=" * 80)
@@ -367,22 +508,34 @@ if __name__ == "__main__":
     
     # Input selection
     parser.add_argument(
+        "--image-path",
+        type=str,
+        default=None,
+        help="Path to PNG image file. If provided, overrides CIFAR-10 options (--index, --category).",
+    )
+    parser.add_argument(
+        "--image-label",
+        type=int,
+        default=None,
+        help="Class label for custom image (optional, 0-9 for CIFAR-10 compatibility).",
+    )
+    parser.add_argument(
         "--index",
         type=int,
         default=None,
-        help="Specific CIFAR-10 image index (0-49999). Takes precedence over --category.",
+        help="Specific CIFAR-10 image index (0-49999). Takes precedence over --category. Ignored if --image-path is provided.",
     )
     parser.add_argument(
         "--category",
         type=int,
         default=None,
-        help="CIFAR-10 category (0-9). Loads random image from this category if --index not provided.",
+        help="CIFAR-10 category (0-9). Loads random image from this category if --index not provided. Ignored if --image-path is provided.",
     )
     parser.add_argument(
         "--data-dir",
         type=str,
         default="data/cifar10",
-        help="Directory for CIFAR-10 data",
+        help="Directory for CIFAR-10 data (ignored if --image-path is provided)",
     )
     
     # Masking
@@ -393,16 +546,23 @@ if __name__ == "__main__":
         help="Percentage of image to mask (0-100)",
     )
     parser.add_argument(
+        "--mask-type",
+        type=str,
+        default="partial",
+        choices=["partial", "random"],
+        help="Type of masking: 'partial' (bottom/top region) or 'random' (random pixels)",
+    )
+    parser.add_argument(
         "--mask-from-bottom",
         action="store_true",
         default=True,
-        help="Mask from bottom (default). Use --no-mask-from-bottom for top.",
+        help="Mask from bottom (default). Use --no-mask-from-bottom for top. Only applies to 'partial' mask type.",
     )
     parser.add_argument(
         "--no-mask-from-bottom",
         dest="mask_from_bottom",
         action="store_false",
-        help="Mask from top instead of bottom",
+        help="Mask from top instead of bottom. Only applies to 'partial' mask type.",
     )
     
     # Checkpoints
@@ -430,6 +590,14 @@ if __name__ == "__main__":
         help="Output directory (default: outputs/cifar10/reconstructions/<timestamp>)",
     )
     
+    # Guidance
+    parser.add_argument(
+        "--cfg-gamma",
+        type=float,
+        default=1.0,
+        help="Guidance strength for CFG (0=unconditional, 1=conditional, >1=stronger guidance). CFG is enabled automatically when a label is provided.",
+    )
+    
     # Other
     parser.add_argument(
         "--seed",
@@ -447,10 +615,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Validate inputs
-    if args.index is not None and not 0 <= args.index < 50000:
-        parser.error("--index must be in range [0, 49999]")
-    if args.category is not None and not 0 <= args.category <= 9:
-        parser.error("--category must be in range [0, 9]")
+    if args.image_path is None:
+        # Validating CIFAR-10 options only if not using custom image
+        if args.index is not None and not 0 <= args.index < 50000:
+            parser.error("--index must be in range [0, 49999]")
+        if args.category is not None and not 0 <= args.category <= 9:
+            parser.error("--category must be in range [0, 9]")
+    if args.image_label is not None and not (isinstance(args.image_label, int)):
+        parser.error("--image-label must be an integer")
     if not 0 <= args.mask_percentage <= 100:
         parser.error("--mask-percentage must be in range [0, 100]")
     
