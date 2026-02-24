@@ -7,7 +7,6 @@
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --gpus=1
-#SBATCH --time=04:00:00
 #SBATCH --output=out/%x_%j.out
 #SBATCH --error=err/%x_%j.err
 #SBATCH --mail-type=all

@@ -61,9 +61,15 @@ def main(args):
     
     print(f"Computing f_mem for {len(models)} models...\n")
     
-    results = []
+    # Open CSV file for writing (write header immediately)
+    os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
+    csv_file = open(args.output, 'w', newline='')
+    writer = csv.DictWriter(csv_file, fieldnames=['model', 'checkpoint', 'reference_dir', 'f_mem', 'f_mem_percent', 'status'])
+    writer.writeheader()
+    csv_file.flush()
     
-    for model_idx, model in enumerate(models):
+    try:
+        for model_idx, model in enumerate(models):
         model_name = Path(model['checkpoint_path']).parent.parent.name
         print(f"\n[{model_idx + 1}/{len(models)}] {model_name}")
         print(f"  Checkpoint: {model['checkpoint_path']}")
@@ -119,32 +125,31 @@ def main(args):
 
             f_mem, _, _ = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
             
-            results.append({
+            result = {
                 'model': model_name,
                 'checkpoint': model['checkpoint_path'],
                 'reference_dir': model['reference_dir'],
                 'f_mem': f_mem,
                 'f_mem_percent': f_mem * 100,
                 'status': 'ok'
-            })
+            }
+            writer.writerow(result)
+            csv_file.flush()
             print(f"  f_mem: {f_mem*100:.2f}%")
         except Exception as e:
-            results.append({
+            result = {
                 'model': model_name,
                 'checkpoint': model['checkpoint_path'],
                 'reference_dir': model['reference_dir'],
                 'f_mem': None,
                 'f_mem_percent': None,
                 'status': f'error: {str(e)}'
-            })
+            }
+            writer.writerow(result)
+            csv_file.flush()
             print(f"  ERROR: {e}")
-    
-    # Save results
-    os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
-    with open(args.output, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['model', 'checkpoint', 'reference_dir', 'f_mem', 'f_mem_percent', 'status'])
-        writer.writeheader()
-        writer.writerows(results)
+    finally:
+        csv_file.close()
     
     print(f"\n{'='*60}")
     print(f"Results saved to {args.output}")
