@@ -21,6 +21,6 @@ OUTPUT=${2:-f_mem_results.csv}
 echo "Config file: $CONFIG"
 echo "Output file: $OUTPUT"
 
-python compute_f_mem_batch.py "$CONFIG" --output "$OUTPUT" --mem-threshold 0.333333
+python ../compute_f_mem_batch.py "$CONFIG" --output "$OUTPUT" --mem-threshold 0.333333
 
 echo "Done. Results in $OUTPUT"
