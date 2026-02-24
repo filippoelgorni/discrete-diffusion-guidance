@@ -1,7 +1,7 @@
 """Batch compute f_mem for multiple models.
 
 Usage:
-    python compute_f_mem_batch.py models_config.txt --output results.csv
+    python compute_f_mem_batch.py models_config.txt --output results.csv --num-samples 10000
 
     models_config.txt format (pipe-separated):
         checkpoint_path | hydra_config_path | reference_dir
@@ -12,13 +12,19 @@ Usage:
 import argparse
 import csv
 import os
-import sys
 from pathlib import Path
 
+import lightning as L
+import omegaconf
 import torch
 from PIL import Image
-from scipy.spatial.distance import cdist
 from tqdm import tqdm
+
+from compute_cifar10_metrics import compute_memorization
+from generate_cifar10_samples import generate_samples
+
+import dataloader
+import diffusion
 
 
 def load_images_from_dir(image_dir: str, label: str) -> torch.Tensor:
@@ -33,24 +39,6 @@ def load_images_from_dir(image_dir: str, label: str) -> torch.Tensor:
     images_tensor = torch.stack(images)
     print(f"  {label}: {len(images_tensor)} images")
     return images_tensor
-
-
-def compute_memorization(generated: torch.Tensor, reference: torch.Tensor, k: float = 1/3) -> float:
-    """Compute f_mem."""
-    gen_flat = generated.view(generated.shape[0], -1).numpy()
-    ref_flat = reference.view(reference.shape[0], -1).numpy()
-    
-    mem_ratios = []
-    for i in tqdm(range(0, len(gen_flat), 500), desc="  Computing distances", leave=False):
-        chunk = gen_flat[i:i + 500]
-        distances = cdist(chunk, ref_flat, metric='euclidean')
-        sorted_idx = __import__('numpy').argsort(distances, axis=1)
-        d1 = distances[__import__('numpy').arange(len(chunk)), sorted_idx[:, 0]]
-        d2 = distances[__import__('numpy').arange(len(chunk)), sorted_idx[:, 1]]
-        mem_ratios.extend((d1 / (d2 + 1e-8)).tolist())
-    
-    f_mem = sum(r < k for r in mem_ratios) / len(mem_ratios)
-    return f_mem
 
 
 def main(args):
@@ -85,24 +73,51 @@ def main(args):
         try:
             # Load reference images for this model
             reference_images = load_images_from_dir(model['reference_dir'], "Reference")
-            
-            # Find generated samples (look for common naming patterns)
-            gen_dir = model['checkpoint_path'].rsplit('/', 2)[0] + '/generated_samples*'
-            gen_dirs = sorted(Path('.').glob(gen_dir.replace('./', '')))
-            
-            if not gen_dirs:
-                # Fallback: look for outputs dir structure
-                model_dir = Path(model['checkpoint_path']).parent.parent.parent
-                gen_dirs = list(model_dir.glob('generated_samples*'))
-            
-            if not gen_dirs:
-                raise FileNotFoundError(f"No generated_samples directory found for {model_name}")
-            
-            gen_dir = str(gen_dirs[-1])
-            print(f"  Generated: {gen_dir}")
-            
-            generated_images = load_images_from_dir(gen_dir, "Generated")
-            f_mem = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
+
+            config_path = Path(model['hydra_config_path'])
+            if config_path.is_dir():
+                config_path = config_path / "config.yaml"
+            if not config_path.exists():
+                raise FileNotFoundError(f"Config not found: {config_path}")
+
+            print(f"  Loading config: {config_path}")
+            config = omegaconf.OmegaConf.load(str(config_path))
+
+            if args.sampling_steps is not None:
+                config.sampling.steps = args.sampling_steps
+            if args.batch_size is not None:
+                config.sampling.batch_size = args.batch_size
+
+            if not hasattr(config, 'eval'):
+                config.eval = omegaconf.DictConfig({})
+            if not hasattr(config.eval, 'disable_ema'):
+                config.eval.disable_ema = False
+
+            tokenizer = dataloader.get_tokenizer(config)
+            model_obj = diffusion.Diffusion.load_from_checkpoint(
+                model['checkpoint_path'],
+                tokenizer=tokenizer,
+                config=config,
+                strict=False,
+            )
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model_obj = model_obj.to(device)
+            model_obj.eval()
+
+            num_classes = 10
+            if hasattr(config, "data") and hasattr(config.data, "num_classes"):
+                num_classes = int(config.data.num_classes)
+
+            print(f"  Generating {args.num_samples} samples on {device}")
+            generated_images, _ = generate_samples(
+                model_obj,
+                args.num_samples,
+                batch_size=model_obj.config.sampling.batch_size,
+                num_classes=num_classes,
+            )
+            generated_images = generated_images.cpu()
+
+            f_mem, _, _ = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
             
             results.append({
                 'model': model_name,
@@ -141,6 +156,11 @@ if __name__ == "__main__":
     parser.add_argument("config", type=str, help="Config file (pipe-separated: checkpoint_path | hydra_config_path | reference_dir)")
     parser.add_argument("--output", type=str, default="f_mem_results.csv", help="Output CSV file")
     parser.add_argument("--mem-threshold", type=float, default=1/3, help="Memorization threshold k")
+    parser.add_argument("--num-samples", type=int, default=10000, help="Number of samples to generate per model")
+    parser.add_argument("--batch-size", type=int, default=None, help="Batch size for generation (uses config default if not specified)")
+    parser.add_argument("--sampling-steps", type=int, default=None, help="Number of sampling steps (uses config default if not specified)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     
     args = parser.parse_args()
+    L.seed_everything(args.seed)
     main(args)
