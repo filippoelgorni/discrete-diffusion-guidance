@@ -12,14 +12,15 @@
 #SBATCH --mail-type=all
 #SBATCH --mail-user=3261535+hpc@phd.unibocconi.it
 
-# Usage: sbatch compute_f_mem_batch.sbatch models_config.txt output.csv
+# Usage: sbatch compute_f_mem_batch.sh models_config.txt output.csv [--num-samples 1000] [--batch-size 64]
 
-CONFIG=${1:-f_mem_models.txt}
+CONFIG=${1:-f_mem_models_100000.txt}
 OUTPUT=${2:-f_mem_results.csv}
+shift 2  # Remove first two args, pass remaining to Python
 
 echo "Config file: $CONFIG"
 echo "Output file: $OUTPUT"
 
-python ../compute_f_mem_batch.py "$CONFIG" --output "$OUTPUT" --mem-threshold 0.333333
+python ../compute_f_mem_batch.py "$CONFIG" --output "$OUTPUT" "$@"
 
 echo "Done. Results in $OUTPUT"
