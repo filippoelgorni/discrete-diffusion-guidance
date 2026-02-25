@@ -30,7 +30,8 @@ import diffusion
 def load_images_from_dir(image_dir: str, label: str) -> torch.Tensor:
     """Load all PNG images from directory."""
     images = []
-    for img_path in sorted(Path(image_dir).rglob('*.png')):
+    img_paths = sorted(Path(image_dir).rglob('*.png'))
+    for img_path in tqdm(img_paths, desc=f"  Loading {label} images", leave=False):
         pil_img = Image.open(img_path)
         img_array = __import__('numpy').array(pil_img)
         img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float()
@@ -69,7 +70,7 @@ def main(args):
     csv_file.flush()
     
     try:
-        for model_idx, model in enumerate(models):
+        for model_idx, model in enumerate(tqdm(models, desc="Processing models", unit="model")):
             model_name = Path(model['checkpoint_path']).parent.parent.name
             print(f"\n[{model_idx + 1}/{len(models)}] {model_name}")
             print(f"  Checkpoint: {model['checkpoint_path']}")
@@ -99,6 +100,7 @@ def main(args):
                 if not hasattr(config.eval, 'disable_ema'):
                     config.eval.disable_ema = False
 
+                print(f"  Loading model checkpoint...")
                 tokenizer = dataloader.get_tokenizer(config)
                 model_obj = diffusion.Diffusion.load_from_checkpoint(
                     model['checkpoint_path'],
@@ -109,6 +111,7 @@ def main(args):
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 model_obj = model_obj.to(device)
                 model_obj.eval()
+                print(f"  Model loaded on {device}.")
 
                 num_classes = 10
                 if hasattr(config, "data") and hasattr(config.data, "num_classes"):
@@ -123,6 +126,7 @@ def main(args):
                 )
                 generated_images = generated_images.cpu()
 
+                print(f"  Computing f_mem metric...")
                 f_mem, _, _ = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
                 
                 result = {
