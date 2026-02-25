@@ -70,84 +70,84 @@ def main(args):
     
     try:
         for model_idx, model in enumerate(models):
-        model_name = Path(model['checkpoint_path']).parent.parent.name
-        print(f"\n[{model_idx + 1}/{len(models)}] {model_name}")
-        print(f"  Checkpoint: {model['checkpoint_path']}")
-        print(f"  Config: {model['hydra_config_path']}")
-        print(f"  Reference: {model['reference_dir']}")
-        
-        try:
-            # Load reference images for this model
-            reference_images = load_images_from_dir(model['reference_dir'], "Reference")
-
-            config_path = Path(model['hydra_config_path'])
-            if config_path.is_dir():
-                config_path = config_path / "config.yaml"
-            if not config_path.exists():
-                raise FileNotFoundError(f"Config not found: {config_path}")
-
-            print(f"  Loading config: {config_path}")
-            config = omegaconf.OmegaConf.load(str(config_path))
-
-            if args.sampling_steps is not None:
-                config.sampling.steps = args.sampling_steps
-            if args.batch_size is not None:
-                config.sampling.batch_size = args.batch_size
-
-            if not hasattr(config, 'eval'):
-                config.eval = omegaconf.DictConfig({})
-            if not hasattr(config.eval, 'disable_ema'):
-                config.eval.disable_ema = False
-
-            tokenizer = dataloader.get_tokenizer(config)
-            model_obj = diffusion.Diffusion.load_from_checkpoint(
-                model['checkpoint_path'],
-                tokenizer=tokenizer,
-                config=config,
-                strict=False,
-            )
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model_obj = model_obj.to(device)
-            model_obj.eval()
-
-            num_classes = 10
-            if hasattr(config, "data") and hasattr(config.data, "num_classes"):
-                num_classes = int(config.data.num_classes)
-
-            print(f"  Generating {args.num_samples} samples on {device}")
-            generated_images, _ = generate_samples(
-                model_obj,
-                args.num_samples,
-                batch_size=model_obj.config.sampling.batch_size,
-                num_classes=num_classes,
-            )
-            generated_images = generated_images.cpu()
-
-            f_mem, _, _ = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
+            model_name = Path(model['checkpoint_path']).parent.parent.name
+            print(f"\n[{model_idx + 1}/{len(models)}] {model_name}")
+            print(f"  Checkpoint: {model['checkpoint_path']}")
+            print(f"  Config: {model['hydra_config_path']}")
+            print(f"  Reference: {model['reference_dir']}")
             
-            result = {
-                'model': model_name,
-                'checkpoint': model['checkpoint_path'],
-                'reference_dir': model['reference_dir'],
-                'f_mem': f_mem,
-                'f_mem_percent': f_mem * 100,
-                'status': 'ok'
-            }
-            writer.writerow(result)
-            csv_file.flush()
-            print(f"  f_mem: {f_mem*100:.2f}%")
-        except Exception as e:
-            result = {
-                'model': model_name,
-                'checkpoint': model['checkpoint_path'],
-                'reference_dir': model['reference_dir'],
-                'f_mem': None,
-                'f_mem_percent': None,
-                'status': f'error: {str(e)}'
-            }
-            writer.writerow(result)
-            csv_file.flush()
-            print(f"  ERROR: {e}")
+            try:
+                # Load reference images for this model
+                reference_images = load_images_from_dir(model['reference_dir'], "Reference")
+
+                config_path = Path(model['hydra_config_path'])
+                if config_path.is_dir():
+                    config_path = config_path / "config.yaml"
+                if not config_path.exists():
+                    raise FileNotFoundError(f"Config not found: {config_path}")
+
+                print(f"  Loading config: {config_path}")
+                config = omegaconf.OmegaConf.load(str(config_path))
+
+                if args.sampling_steps is not None:
+                    config.sampling.steps = args.sampling_steps
+                if args.batch_size is not None:
+                    config.sampling.batch_size = args.batch_size
+
+                if not hasattr(config, 'eval'):
+                    config.eval = omegaconf.DictConfig({})
+                if not hasattr(config.eval, 'disable_ema'):
+                    config.eval.disable_ema = False
+
+                tokenizer = dataloader.get_tokenizer(config)
+                model_obj = diffusion.Diffusion.load_from_checkpoint(
+                    model['checkpoint_path'],
+                    tokenizer=tokenizer,
+                    config=config,
+                    strict=False,
+                )
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                model_obj = model_obj.to(device)
+                model_obj.eval()
+
+                num_classes = 10
+                if hasattr(config, "data") and hasattr(config.data, "num_classes"):
+                    num_classes = int(config.data.num_classes)
+
+                print(f"  Generating {args.num_samples} samples on {device}")
+                generated_images, _ = generate_samples(
+                    model_obj,
+                    args.num_samples,
+                    batch_size=model_obj.config.sampling.batch_size,
+                    num_classes=num_classes,
+                )
+                generated_images = generated_images.cpu()
+
+                f_mem, _, _ = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
+                
+                result = {
+                    'model': model_name,
+                    'checkpoint': model['checkpoint_path'],
+                    'reference_dir': model['reference_dir'],
+                    'f_mem': f_mem,
+                    'f_mem_percent': f_mem * 100,
+                    'status': 'ok'
+                }
+                writer.writerow(result)
+                csv_file.flush()
+                print(f"  f_mem: {f_mem*100:.2f}%")
+            except Exception as e:
+                result = {
+                    'model': model_name,
+                    'checkpoint': model['checkpoint_path'],
+                    'reference_dir': model['reference_dir'],
+                    'f_mem': None,
+                    'f_mem_percent': None,
+                    'status': f'error: {str(e)}'
+                }
+                writer.writerow(result)
+                csv_file.flush()
+                print(f"  ERROR: {e}")
     finally:
         csv_file.close()
     
