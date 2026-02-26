@@ -18,12 +18,14 @@ import transformers
 from mamba_ssm.utils.generation import InferenceParams
 from torch import Tensor
 from tqdm.auto import tqdm
+import pandas as pd
 
 import classifier
 import dataloader
 import eval_utils
 import models
 import noise_schedule
+from mask_schedulers import UnmaskUnifKScheduler
 
 LOG2 = math.log(2)
 
@@ -1270,6 +1272,106 @@ class Diffusion(L.LightningModule):
   ):
     raise NotImplementedError
 
+
+  @torch.no_grad()
+  def sample_with_scheduler(self, 
+      xinit = None,
+      mask_scheduler=None):
+    """
+    Sample from the model using a given mask scheduler.
+    Modify configs/sample-config.yaml to change sampling parameters.
+    """
+    self.eval()
+    assert self.config.noise.type == 'loglinear'
+    assert self.time_conditioning == False
+    assert self.diffusion == 'absorbing_state'
+    assert self.config.parameterization == 'subs'
+    assert self.config.subs_masking == False
+    assert self.T == 0
+    
+    seq_length = self.config.model.length
+    if mask_scheduler is None:
+      mask_scheduler = UnmaskUnifKScheduler(mask_index=self.mask_index, k=1)
+    
+    batch_size_per_gpu = self.config.loader.batch_size
+    # Lightning auto-casting is not working in this method for some reason
+    if xinit is not None:
+      x = xinit.to(self.device)
+    else:
+      x = self._sample_prior(batch_size_per_gpu, seq_length).to(self.device)
+    assert x.ndim == 2
+
+    # Progress bar setup
+    total_tokens = x.numel()                 # batch_size * seq_len
+    # initialize progress bar with current number of unmasked tokens
+    pbar = tqdm(total=total_tokens, unit="tok")
+    prev_unmasked = int((x != self.mask_index).sum().item())
+    pbar.update(prev_unmasked)
+
+    keep_sampling = True
+    n_proposed = 0
+    n_accepted = 0
+    stats = pd.DataFrame()
+    while keep_sampling:
+      x_next, p_x0, new_stats = self._sample_with_scheduler_update(x, mask_scheduler)
+      x = x_next
+      stats = pd.concat([stats, new_stats], axis=0, ignore_index=True)
+
+      curr_unmasked = int((x != self.mask_index).sum().item())
+      delta = curr_unmasked - prev_unmasked
+      pbar.update(delta)
+      assert delta == new_stats['n_accepted'].sum()
+      n_proposed += new_stats['n_proposed'].sum()
+      n_accepted += new_stats['n_accepted'].sum()
+      pbar.set_postfix({'frac': f'{curr_unmasked/total_tokens:.3f}',
+                        'accept': f'{n_accepted/n_proposed:.3f}'}, refresh=False)
+      
+      prev_unmasked = curr_unmasked
+
+      # stop when no masked tokens remain (i.e. everything is unmasked)
+      keep_sampling = curr_unmasked < total_tokens
+    
+    pbar.close()
+    # return x, stats
+    return x
+  
+  def _sample_with_scheduler_update(self, x, mask_scheduler):
+    batch_size, seq_len = x.shape
+    
+    p_x0 = self.forward(x).float().exp() # [batch_size, seq_len, vocab_size]
+    vocab_size = p_x0.shape[-1]
+    assert p_x0.shape == (batch_size, seq_len, vocab_size)
+    # TODO not implemented in this repo yet
+    # if self.config.sampling.nucleus_p < 1:
+    #   p_x0 = nucleus_renorm(p_x0, self.config.sampling.nucleus_p)
+
+    pos_to_unmask = mask_scheduler.get_pos_to_unmask(p_x0, x) # List of length batch_size, each element is a list of positions to unmask
+    masked = (x == self.mask_index)          # [batch_size, seq_len]
+    xnew = x.clone()
+    avg_log_probs = []
+    for b in range(batch_size):
+      pos_idx = pos_to_unmask[b]
+      q_s = p_x0[b, pos_idx]                    # [nk, V]
+      # Sample new tokens and write back
+      new_tokens = torch.multinomial(q_s, num_samples=1).squeeze(1)  # [nk]
+      assert new_tokens.shape == (len(pos_idx),)
+      xnew[b, pos_idx] = new_tokens
+      # Compute average log prob of accepted tokens
+      log_probs = torch.log(p_x0[b, pos_idx, new_tokens] + 1e-10)  # [nk]
+      avg_log_prob = log_probs.mean().item() if len(log_probs) > 0 else 0.0
+      avg_log_probs.append(avg_log_prob)
+  
+    n_proposed  = np.array([len(p) for p in pos_to_unmask])
+    stats = {"sample_id": np.arange(batch_size),
+             "n_masked": masked.sum(dim=1).cpu().numpy(),
+             "n_proposed": n_proposed,
+             "n_accepted": n_proposed,  # all proposed are accepted 
+             "avg_log_probs": avg_log_probs,
+        }
+    
+    x = xnew
+    return x, p_x0, pd.DataFrame(stats)
+  
   @torch.no_grad()
   def _diffusion_sample(
     self,
