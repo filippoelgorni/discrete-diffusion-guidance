@@ -1,4 +1,7 @@
+import os
+
 import einops
+import numpy as np
 import torch
 import torchvision
 from PIL import Image
@@ -40,8 +43,20 @@ class DummyVisionTokenizer:
 
 class DiscreteCIFAR10(torchvision.datasets.CIFAR10):
   def __init__(self, root, train, **kwargs):
-    super().__init__(root=root, train=train,
-                     **kwargs)
+    split = 'train' if train else 'test'
+    npz_path = os.path.join(root, f'{split}.npz')
+    if os.path.exists(npz_path):
+      # Custom subset format: load directly from numpy arrays,
+      # bypassing torchvision's integrity check.
+      super(torchvision.datasets.CIFAR10, self).__init__(root)
+      self.train = train
+      self.target_transform = kwargs.get('target_transform', None)
+      subset = np.load(npz_path)
+      self.data = subset['data']      # (N, 32, 32, 3) uint8
+      self.targets = subset['targets'].tolist()
+    else:
+      super().__init__(root=root, train=train,
+                       **kwargs)
     self.transform = torchvision.transforms.Compose(
       [
         torchvision.transforms.Resize(32),
