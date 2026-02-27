@@ -35,6 +35,11 @@ if [[ "${DATASET_PATH}" != /* ]]; then
   DATASET_PATH="${REPO_ROOT}/${DATASET_PATH}"
 fi
 
+# Allow passing either dataset root or the cifar-10-batches-py subdirectory
+if [[ "$(basename "${DATASET_PATH}")" == "cifar-10-batches-py" ]]; then
+  DATASET_PATH="$(dirname "${DATASET_PATH}")"
+fi
+
 # Optional: reference images directory for f_mem
 REFERENCE_DIR=${REFERENCE_DIR:-}
 if [[ -n "${REFERENCE_DIR}" && "${REFERENCE_DIR}" != /* ]]; then
@@ -86,16 +91,56 @@ COMPUTE_F_MEM=${COMPUTE_F_MEM:-false}
 NUM_F_MEM_SAMPLES=${NUM_F_MEM_SAMPLES:-100}
 MEM_THRESHOLD=${MEM_THRESHOLD:-0.333}
 
+check_cifar10_dataset_path() {
+  local dataset_root="$1"
+  local batches_dir="${dataset_root}/cifar-10-batches-py"
+  local required_files=(
+    data_batch_1
+    data_batch_2
+    data_batch_3
+    data_batch_4
+    data_batch_5
+    test_batch
+    batches.meta
+  )
+
+  echo "Dataset root:     ${dataset_root}"
+  echo "Expected batches: ${batches_dir}"
+
+  if [[ ! -d "${batches_dir}" ]]; then
+    echo "ERROR: Missing directory ${batches_dir}"
+    echo "Hint: DATASET_PATH must point to the directory containing cifar-10-batches-py"
+    return 1
+  fi
+
+  local missing_files=()
+  for file_name in "${required_files[@]}"; do
+    if [[ ! -f "${batches_dir}/${file_name}" ]]; then
+      missing_files+=("${file_name}")
+    fi
+  done
+
+  if (( ${#missing_files[@]} > 0 )); then
+    echo "ERROR: Missing CIFAR-10 files in ${batches_dir}: ${missing_files[*]}"
+    return 1
+  fi
+
+  return 0
+}
+
 echo "=============================================="
 echo "Training Configuration"
 echo "=============================================="
 echo "MODEL:           ${MODEL}"
 echo "Parameterization: ${PARAMETERIZATION}"
 echo "Diffusion:       ${DIFFUSION}"
+echo "Dataset path:    ${DATASET_PATH}"
 echo "Batch size:      ${BATCH_SIZE}"
 echo "Max steps:       ${MAX_STEPS}"
 echo "Checkpoint every n steps: ${CHECKPOINT_EVERY_N_STEPS}"
 echo "=============================================="
+
+check_cifar10_dataset_path "${DATASET_PATH}" || exit 1
 
 # To enable preemption re-loading, set `hydra.run.dir`
 srun python -u -m main \
