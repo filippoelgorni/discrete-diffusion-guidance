@@ -1,0 +1,4 @@
+../outputs/cifar10/train_cifar10_mdlm_0002_v4/checkpoints/99999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_0002_v4/.hydra|../data/cifar10_0002_reference
+../outputs/cifar10/train_cifar10_mdlm_0006_v1/checkpoints/49999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_0006_v1/.hydra|../data/cifar10_0006_reference
+../outputs/cifar10/train_cifar10_mdlm_0007_v1/checkpoints/49999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_0007_v1/.hydra|../data/cifar10_0007_reference
+
