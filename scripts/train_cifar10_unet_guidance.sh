@@ -10,10 +10,11 @@
 #SBATCH --output=out/%x_%j.out
 #SBATCH --error=err/%x_%j.err
 #SBATCH --mail-type=all
-#SBATCH --mail-user=3261535@phd.unibocconi.it
+#SBATCH --mail-user=3261535+hpc@phd.unibocconi.it
 
 # NOTE: Need to set the (local) dataset path for downloaded cifar-10 data
-DATASET_PATH=${HOME}/discrete-diffusion-guidance/data/cifar10
+# For subset training, point to the preprocessed subset directory instead
+DATASET_PATH=${DATASET_PATH:-${HOME}/discrete-diffusion-guidance/data/cifar10}
 
 <<comment
 #  Usage:
@@ -27,6 +28,24 @@ comment
 
 # Setup environment
 cd ../ || exit  # Go to the root directory of the repo
+REPO_ROOT=$(pwd)
+
+# Convert DATASET_PATH to absolute path relative to repo root if not already absolute
+if [[ "${DATASET_PATH}" != /* ]]; then
+  DATASET_PATH="${REPO_ROOT}/${DATASET_PATH}"
+fi
+
+# Allow passing either dataset root or the cifar-10-batches-py subdirectory
+if [[ "$(basename "${DATASET_PATH}")" == "cifar-10-batches-py" ]]; then
+  DATASET_PATH="$(dirname "${DATASET_PATH}")"
+fi
+
+# Optional: reference images directory for f_mem
+REFERENCE_DIR=${REFERENCE_DIR:-}
+if [[ -n "${REFERENCE_DIR}" && "${REFERENCE_DIR}" != /* ]]; then
+  REFERENCE_DIR="${REPO_ROOT}/${REFERENCE_DIR}"
+fi
+
 source setup_env.sh
 export NCCL_P2P_LEVEL=NVL
 export HYDRA_FULL_ERROR=1
@@ -38,7 +57,6 @@ if [ -z "${MODEL}" ]; then
   exit 1
 fi
 
-RUN_NAME="${MODEL}"
 T=0
 if [ "${MODEL}" = "mdlm" ]; then
   PARAMETERIZATION=subs
@@ -57,7 +75,74 @@ else
   exit 1
 fi
 
-# To enable preemption re-loading, set `hydra.run.dir` or
+# Optional: Set BATCH_SIZE for training (default: 250)
+BATCH_SIZE=${BATCH_SIZE:-250}
+
+# Optional: Set MAX_STEPS to train for more/fewer steps (default: 300000)
+MAX_STEPS=${MAX_STEPS:-300000}
+
+CHECKPOINT_EVERY_N_STEPS=${CHECKPOINT_EVERY_N_STEPS:-10000}
+
+# Optional: Set VAL_CHECK_INTERVAL for validation frequency (default: 10000)
+VAL_CHECK_INTERVAL=${VAL_CHECK_INTERVAL:-10000}
+
+# Optional: f_mem computation during validation
+COMPUTE_F_MEM=${COMPUTE_F_MEM:-false}
+NUM_F_MEM_SAMPLES=${NUM_F_MEM_SAMPLES:-100}
+MEM_THRESHOLD=${MEM_THRESHOLD:-0.333}
+
+check_cifar10_dataset_path() {
+  local dataset_root="$1"
+  local batches_dir="${dataset_root}/cifar-10-batches-py"
+  local required_files=(
+    data_batch_1
+    data_batch_2
+    data_batch_3
+    data_batch_4
+    data_batch_5
+    test_batch
+    batches.meta
+  )
+
+  echo "Dataset root:     ${dataset_root}"
+  echo "Expected batches: ${batches_dir}"
+
+  if [[ ! -d "${batches_dir}" ]]; then
+    echo "ERROR: Missing directory ${batches_dir}"
+    echo "Hint: DATASET_PATH must point to the directory containing cifar-10-batches-py"
+    return 1
+  fi
+
+  local missing_files=()
+  for file_name in "${required_files[@]}"; do
+    if [[ ! -f "${batches_dir}/${file_name}" ]]; then
+      missing_files+=("${file_name}")
+    fi
+  done
+
+  if (( ${#missing_files[@]} > 0 )); then
+    echo "ERROR: Missing CIFAR-10 files in ${batches_dir}: ${missing_files[*]}"
+    return 1
+  fi
+
+  return 0
+}
+
+echo "=============================================="
+echo "Training Configuration"
+echo "=============================================="
+echo "MODEL:           ${MODEL}"
+echo "Parameterization: ${PARAMETERIZATION}"
+echo "Diffusion:       ${DIFFUSION}"
+echo "Dataset path:    ${DATASET_PATH}"
+echo "Batch size:      ${BATCH_SIZE}"
+echo "Max steps:       ${MAX_STEPS}"
+echo "Checkpoint every n steps: ${CHECKPOINT_EVERY_N_STEPS}"
+echo "=============================================="
+
+check_cifar10_dataset_path "${DATASET_PATH}" || exit 1
+
+# To enable preemption re-loading, set `hydra.run.dir`
 srun python -u -m main \
   is_vision=True \
   diffusion=${DIFFUSION} \
@@ -68,17 +153,21 @@ srun python -u -m main \
   data=cifar10 \
   data.train=${DATASET_PATH} \
   data.valid=${DATASET_PATH} \
-  loader.global_batch_size=512 \
+  loader.global_batch_size=${BATCH_SIZE} \
   loader.eval_global_batch_size=64 \
   backbone=unet \
   model=unet \
   optim.lr=2e-4 \
   lr_scheduler=constant_warmup \
   lr_scheduler.num_warmup_steps=5000 \
-  callbacks.checkpoint_every_n_steps.every_n_train_steps=10_000 \
-  trainer.max_steps=300_000 \
-  trainer.val_check_interval=10_000 \
-  +trainer.check_val_every_n_epoch=null \
+  callbacks.checkpoint_every_n_steps.every_n_train_steps=${CHECKPOINT_EVERY_N_STEPS} \
+  trainer.max_steps=${MAX_STEPS} \
+  trainer.val_check_interval=${VAL_CHECK_INTERVAL} \
+  trainer.check_val_every_n_epoch=null \
+  eval.compute_f_mem=${COMPUTE_F_MEM} \
+  eval.reference_dir=${REFERENCE_DIR} \
+  eval.num_f_mem_samples=${NUM_F_MEM_SAMPLES} \
+  eval.mem_threshold=${MEM_THRESHOLD} \
   training.guidance.cond_dropout=0.1 \
   eval.generate_samples=True \
   sampling.num_sample_batches=1 \
@@ -87,3 +176,4 @@ srun python -u -m main \
   sampling.steps=128 \
   wandb.name="cifar10_${RUN_NAME}" \
   hydra.run.dir="${PWD}/outputs/cifar10/${RUN_NAME}"
+

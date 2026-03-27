@@ -1,0 +1,7 @@
+../outputs/cifar10/train_cifar10_mdlm_0005_v1/checkpoints/99999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_0005_v1/.hydra|../data/cifar10_0005_reference
+../outputs/cifar10/train_cifar10_mdlm_001_v6/checkpoints/49999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_001_v6/.hydra|../data/cifar10_001_reference
+../outputs/cifar10/train_cifar10_mdlm_002_v2/checkpoints/25000-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_002_v2/.hydra|../data/cifar10_002_reference
+../outputs/cifar10/train_cifar10_mdlm_005_v1/checkpoints/9999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_005_v1/.hydra|../data/cifar10_005_reference
+../outputs/cifar10/train_cifar10_mdlm_01_v6/checkpoints/4999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_01_v6/.hydra|../data/cifar10_01_reference
+../outputs/cifar10/train_cifar10_mdlm_05_v1/checkpoints/999-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_05_v1/.hydra|../data/cifar10_05_reference
+../outputs/cifar10/train_cifar10_mdlm_1_v1/checkpoints/63-100000.ckpt|../outputs/cifar10/train_cifar10_mdlm_1_v1/.hydra|../data/cifar10_1_reference

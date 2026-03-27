@@ -57,6 +57,11 @@ eval:
   generate_samples: True
   generated_samples_path: ''
   max_samples: 50_000
+  # F_mem computation during training
+  compute_f_mem: False  # Enable f_mem computation during validation
+  reference_dir: ''  # Path to directory with reference PNG images for f_mem computation
+  num_f_mem_samples: 100  # Number of samples to generate for f_mem metric
+  mem_threshold: 0.333  # Threshold for memorization (default 1/3)
 
 optim:
   weight_decay: 0
