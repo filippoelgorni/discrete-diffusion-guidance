@@ -163,7 +163,7 @@ srun python -u -m main \
   callbacks.checkpoint_every_n_steps.every_n_train_steps=${CHECKPOINT_EVERY_N_STEPS} \
   trainer.max_steps=${MAX_STEPS} \
   trainer.val_check_interval=${VAL_CHECK_INTERVAL} \
-  +trainer.check_val_every_n_epoch=null \
+  trainer.check_val_every_n_epoch=null \
   eval.compute_f_mem=${COMPUTE_F_MEM} \
   eval.reference_dir=${REFERENCE_DIR} \
   eval.num_f_mem_samples=${NUM_F_MEM_SAMPLES} \
