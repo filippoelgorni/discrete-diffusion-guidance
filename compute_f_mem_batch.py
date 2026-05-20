@@ -16,8 +16,10 @@ from pathlib import Path
 
 import lightning as L
 import omegaconf
+import numpy as np
 import torch
 from PIL import Image
+from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
 from compute_cifar10_metrics import compute_memorization
@@ -25,6 +27,46 @@ from generate_cifar10_samples import generate_samples
 
 import dataloader
 import diffusion
+
+
+HAMMING_THRESHOLDS_PCT_DEFAULT = [10.0, 5.0, 1.0, 0.5, 0.1]
+
+
+def _ham_threshold_suffix(threshold_pct: float) -> str:
+    """Format a Hamming threshold in percent as a compact CSV suffix."""
+    return f"{int(round(threshold_pct * 10)):03d}"
+
+
+def compute_hamming_memorization(
+    generated: torch.Tensor,
+    reference: torch.Tensor,
+    thresholds_pct: list[float],
+    chunk_size: int = 256,
+) -> dict[str, float]:
+    """Compute Hamming-based memorization fractions from one nearest-neighbor pass."""
+    if len(generated.shape) != 4 or generated.shape[1:] != (3, 32, 32):
+        raise ValueError(f"Generated samples shape {generated.shape} != (N, 3, 32, 32)")
+    if len(reference.shape) != 4 or reference.shape[1:] != (3, 32, 32):
+        raise ValueError(f"Reference images shape {reference.shape} != (M, 3, 32, 32)")
+
+    thresholds_pct = sorted({float(t) for t in thresholds_pct})
+
+    gen_flat = torch.clamp(generated, 0, 255).round().to(torch.uint8).view(generated.shape[0], -1).cpu().numpy()
+    ref_flat = torch.clamp(reference, 0, 255).round().to(torch.uint8).view(reference.shape[0], -1).cpu().numpy()
+
+    nearest_hamming = np.empty(len(gen_flat), dtype=np.float32)
+
+    for i in tqdm(range(0, len(gen_flat), chunk_size), desc="  Hamming NN"):
+        chunk = gen_flat[i:i + chunk_size]
+        distances = cdist(chunk, ref_flat, metric="hamming")
+        nearest_hamming[i:i + len(chunk)] = distances.min(axis=1)
+
+    results = {}
+    for threshold_pct in thresholds_pct:
+        suffix = _ham_threshold_suffix(threshold_pct)
+        results[f"f_mem_ham_{suffix}"] = float((nearest_hamming <= (threshold_pct / 100.0)).mean())
+
+    return results
 
 
 def load_images_from_dir(image_dir: str, label: str) -> torch.Tensor:
@@ -61,11 +103,17 @@ def main(args):
             })
     
     print(f"Computing f_mem for {len(models)} models...\n")
+
+    ham_thresholds_pct = list(args.ham_thresholds_pct)
+    ham_fieldnames = [f"f_mem_ham_{_ham_threshold_suffix(t)}" for t in sorted({float(t) for t in ham_thresholds_pct})]
     
     # Open CSV file for writing (write header immediately)
     os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
     csv_file = open(args.output, 'w', newline='')
-    writer = csv.DictWriter(csv_file, fieldnames=['model', 'checkpoint', 'reference_dir', 'f_mem', 'f_mem_percent', 'status'])
+    writer = csv.DictWriter(
+        csv_file,
+        fieldnames=['model', 'checkpoint', 'reference_dir', 'f_mem', 'f_mem_percent', *ham_fieldnames, 'status'],
+    )
     writer.writeheader()
     csv_file.flush()
     
@@ -128,6 +176,12 @@ def main(args):
 
                 print(f"  Computing f_mem metric...")
                 f_mem, _, _ = compute_memorization(generated_images, reference_images, k=args.mem_threshold)
+                print(f"  Computing Hamming f_mem metrics...")
+                hamming_metrics = compute_hamming_memorization(
+                    generated_images,
+                    reference_images,
+                    thresholds_pct=ham_thresholds_pct,
+                )
                 
                 result = {
                     'model': model_name,
@@ -135,11 +189,14 @@ def main(args):
                     'reference_dir': model['reference_dir'],
                     'f_mem': f_mem,
                     'f_mem_percent': f_mem * 100,
+                    **hamming_metrics,
                     'status': 'ok'
                 }
                 writer.writerow(result)
                 csv_file.flush()
                 print(f"  f_mem: {f_mem*100:.2f}%")
+                for key in ham_fieldnames:
+                    print(f"  {key}: {hamming_metrics[key]*100:.2f}%")
             except Exception as e:
                 result = {
                     'model': model_name,
@@ -147,6 +204,7 @@ def main(args):
                     'reference_dir': model['reference_dir'],
                     'f_mem': None,
                     'f_mem_percent': None,
+                    **{name: None for name in ham_fieldnames},
                     'status': f'error: {str(e)}'
                 }
                 writer.writerow(result)
@@ -166,6 +224,13 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default="f_mem_results.csv", help="Output CSV file")
     parser.add_argument("--mem-threshold", type=float, default=1/3, help="Memorization threshold k")
     parser.add_argument("--num-samples", type=int, default=10000, help="Number of samples to generate per model")
+    parser.add_argument(
+        "--ham-thresholds-pct",
+        type=float,
+        nargs="+",
+        default=HAMMING_THRESHOLDS_PCT_DEFAULT,
+        help="Hamming thresholds in percent of differing pixels. Default: 10 5 1 0.5 0.1",
+    )
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size for generation (uses config default if not specified)")
     parser.add_argument("--sampling-steps", type=int, default=None, help="Number of sampling steps (uses config default if not specified)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
