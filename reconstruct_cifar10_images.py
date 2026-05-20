@@ -406,7 +406,7 @@ def main(args):
     for i, checkpoint_path in enumerate(args.checkpoints):
         print(f"\n--- Checkpoint {i + 1}/{len(args.checkpoints)} ---")
         print(f"Path: {checkpoint_path}")
-        
+
         # Load model with guidance (use original image's label as condition if available)
         model, actual_device = load_model(
             checkpoint_path,
@@ -416,12 +416,12 @@ def main(args):
             cfg_gamma=args.cfg_gamma,
             sampling_steps=args.sampling_steps,
         )
-        
+
         if use_cfg and label is not None:
             class_name = get_class_name(label) if label < 10 else "custom"
             print(f"Using CFG guidance with class {label} ({class_name}), gamma={args.cfg_gamma}")
-        
-        # Encode image with masking
+
+        # Encode image with masking once (tokens are deterministic given image + tokenizer)
         print(f"Encoding image with {args.mask_percentage}% {args.mask_type} masking...")
         partial_tokens = encode_image_for_reconstruction(
             original_image,
@@ -430,46 +430,71 @@ def main(args):
             mask_type=args.mask_type,
             mask_from_bottom=args.mask_from_bottom,
         )
-        partial_tokens = partial_tokens.to(args.device)
-        
+        partial_tokens = partial_tokens.to(actual_device)
+
         print(f"Token shape: {partial_tokens.shape}")
         num_masked = (partial_tokens == model.tokenizer.mask_token_id).sum().item()
         print(f"Number of masked tokens: {num_masked}/{partial_tokens.numel()}")
-        
-        # Reconstruct
-        print("Reconstructing...")
-        reconstructed_image = reconstruct_image(
-            model,
-            partial_tokens,
-            eps=args.eps,
-        )
-        
-        # Create masked visualization from actual tokens (only once, for first checkpoint)
-        if i == 0:
-            print(f"\n=== Creating masked visualization from actual tokens ===")
-            # Decode the masked tokens to see what the model actually sees
-            # (masked tokens will decode to their values, we visualize by setting mask_token positions to 0)
-            partial_tokens_vis = partial_tokens.clone()
-            partial_tokens_vis[partial_tokens_vis == model.tokenizer.mask_token_id] = 0
-            masked_visualization = model.tokenizer.batch_decode(partial_tokens_vis).float()
-            masked_visualization = torch.clamp(masked_visualization, 0, 255).squeeze(0)
-            
-            masked_vis_path = os.path.join(output_dir, "01_masked.png")
-            save_image(masked_visualization, masked_vis_path)
-            print(f"Masked visualization saved: {masked_vis_path}")
-            print(f"  (Generated from actual masked tokens to ensure consistency)")
-        
-        # Save reconstructed image
-        checkpoint_name = os.path.splitext(os.path.basename(checkpoint_path))[0]
-        run_name = os.path.basename(os.path.dirname(os.path.dirname(checkpoint_path)))
-        recon_path = os.path.join(
-            output_dir,
-            f"02_reconstructed_{run_name}_{checkpoint_name}.png"
-        )
-        save_image(reconstructed_image, recon_path)
-        print(f"Reconstructed image saved: {recon_path}")
-        
-        # Clean up
+
+        # Run multiple reconstructions per checkpoint (different seeds)
+        for run_idx in range(args.num_runs):
+            run_seed = args.seed + run_idx
+            print(f"\nRun {run_idx + 1}/{args.num_runs} (seed={run_seed})")
+            L.seed_everything(run_seed)
+            np.random.seed(run_seed)
+            torch.manual_seed(run_seed)
+
+            # Reconstruct
+            print(f"Reconstructing (using {model.config.sampling.steps} sampling steps)...")
+            reconstructed_image = reconstruct_image(
+                model,
+                partial_tokens,
+                eps=args.eps,
+                mask_token_fill=args.mask_token_fill,
+                log_token_stats=args.debug_tokens,
+            )
+
+            if args.debug_tokens:
+                height = original_image.shape[1]
+                num_rows_to_mask = int(height * args.mask_percentage / 100)
+                if args.mask_from_bottom:
+                    masked_rows = slice(height - num_rows_to_mask, height)
+                else:
+                    masked_rows = slice(0, num_rows_to_mask)
+                mask = torch.zeros_like(original_image, dtype=torch.bool)
+                mask[:, masked_rows, :] = True
+                unmask = ~mask
+                print("Region stats (original image)")
+                _region_stats("  masked region", original_image, mask)
+                _region_stats("  unmasked region", original_image, unmask)
+                print("Region stats (reconstructed image)")
+                _region_stats("  masked region", reconstructed_image, mask)
+                _region_stats("  unmasked region", reconstructed_image, unmask)
+
+            # Create masked visualization from actual tokens (only once, for first checkpoint/run)
+            if i == 0 and run_idx == 0:
+                print(f"\n=== Creating masked visualization from actual tokens ===")
+                partial_tokens_vis = partial_tokens.clone()
+                partial_tokens_vis[partial_tokens_vis == model.tokenizer.mask_token_id] = 0
+                masked_visualization = model.tokenizer.batch_decode(partial_tokens_vis).float()
+                masked_visualization = torch.clamp(masked_visualization, 0, 255).squeeze(0)
+
+                masked_vis_path = os.path.join(output_dir, "01_masked.png")
+                save_image(masked_visualization, masked_vis_path)
+                print(f"Masked visualization saved: {masked_vis_path}")
+                print(f"  (Generated from actual masked tokens to ensure consistency)")
+
+            # Save reconstructed image (include run and seed)
+            checkpoint_name = os.path.splitext(os.path.basename(checkpoint_path))[0]
+            run_name = os.path.basename(os.path.dirname(os.path.dirname(checkpoint_path)))
+            recon_path = os.path.join(
+                output_dir,
+                f"02_reconstructed_{run_name}_{checkpoint_name}_run{run_idx}_seed{run_seed}.png"
+            )
+            save_image(reconstructed_image, recon_path)
+            print(f"Reconstructed image saved: {recon_path}")
+
+        # Clean up model after all runs for this checkpoint
         del model
         torch.cuda.empty_cache()
     
@@ -497,7 +522,8 @@ def main(args):
     else:
         print(f"CFG Guidance: DISABLED")
     print(f"Output directory: {output_dir}")
-    print(f"Total reconstructions: {len(args.checkpoints)}")
+    total_recons = len(args.checkpoints) * getattr(args, 'num_runs', 1)
+    print(f"Total reconstructions: {total_recons}")
     print("=" * 80)
 
 
@@ -597,6 +623,14 @@ if __name__ == "__main__":
         default=1.0,
         help="Guidance strength for CFG (0=unconditional, 1=conditional, >1=stronger guidance). CFG is enabled automatically when a label is provided.",
     )
+    parser.add_argument(
+        "--num-runs",
+        "--num-samples-per-checkpoint",
+        dest="num_runs",
+        type=int,
+        default=1,
+        help="Number of reconstruction samples to generate per checkpoint (each uses a different seed).",
+    )
     
     # Other
     parser.add_argument(
@@ -625,6 +659,10 @@ if __name__ == "__main__":
         parser.error("--image-label must be an integer")
     if not 0 <= args.mask_percentage <= 100:
         parser.error("--mask-percentage must be in range [0, 100]")
+    if args.num_runs < 1:
+        parser.error("--num-runs must be >= 1")
+    if args.mask_token_fill is not None and not 0 <= args.mask_token_fill <= 255:
+        parser.error("--mask-token-fill must be in range [0, 255]")
     
     # Verify checkpoints exist
     for ckpt in args.checkpoints:
