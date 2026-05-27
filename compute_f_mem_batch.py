@@ -3,6 +3,10 @@
 Usage:
     python compute_f_mem_batch.py models_config.txt --output results.csv --num-samples 10000
 
+    # Optional CFG mode that draws a random class for every generated sample
+    python compute_f_mem_batch.py models_config.txt --output results.csv --num-samples 10000 \
+        --use-cfg-random-category --cfg-gamma 2.0
+
     models_config.txt format (pipe-separated):
         checkpoint_path | hydra_config_path | reference_dir
         outputs/model1/checkpoints/last.ckpt | outputs/model1/.hydra | data/cifar10_reference/train
@@ -84,6 +88,49 @@ def load_images_from_dir(image_dir: str, label: str) -> torch.Tensor:
     return images_tensor
 
 
+def generate_samples_with_random_cfg_categories(
+    model: diffusion.Diffusion,
+    num_samples: int,
+    num_classes: int,
+) -> tuple[torch.Tensor, list[int]]:
+    """Generate samples one at a time, picking a random CFG class per sample."""
+    if not hasattr(model.config, 'guidance') or model.config.guidance is None:
+        raise ValueError("CFG guidance must be configured before calling this helper")
+    if getattr(model.config.guidance, 'method', None) != 'cfg':
+        raise ValueError("model.config.guidance.method must be 'cfg' for random CFG sampling")
+
+    samples = []
+    conditions = []
+    original_batch_size = int(model.config.sampling.batch_size)
+
+    print(f"Generating {num_samples} samples one-by-one with random CFG categories...")
+    print(f"Using CFG guidance: True")
+    print(f"  Gamma: {model.config.guidance.gamma}")
+    print(f"  Categories sampled uniformly from [0, {num_classes - 1}]")
+
+    model.config.sampling.batch_size = 1
+    try:
+        for _ in tqdm(range(num_samples), desc="Generating samples"):
+            batch_condition = int(np.random.randint(0, num_classes))
+            model.config.guidance.condition = batch_condition
+            conditions.append(batch_condition)
+
+            with torch.no_grad():
+                raw_sample = model.sample()
+                decoded = model.tokenizer.batch_decode(raw_sample).float()
+                decoded = torch.clamp(decoded, 0, 255)
+                samples.append(decoded)
+    finally:
+        model.config.sampling.batch_size = original_batch_size
+
+    all_samples = torch.cat(samples, dim=0)[:num_samples]
+    assert all_samples.shape == (num_samples, 3, 32, 32), (
+        f"Generated samples shape {all_samples.shape} != ({num_samples}, 3, 32, 32)"
+    )
+
+    return all_samples, conditions
+
+
 def main(args):
     # Read model config
     models = []
@@ -143,6 +190,14 @@ def main(args):
                 if args.batch_size is not None:
                     config.sampling.batch_size = args.batch_size
 
+                if args.use_cfg_random_category:
+                    guidance_config = {
+                        'method': 'cfg',
+                        'condition': 0,
+                        'gamma': args.cfg_gamma,
+                    }
+                    omegaconf.OmegaConf.update(config, key='guidance', value=guidance_config, force_add=True)
+
                 if not hasattr(config, 'eval'):
                     config.eval = omegaconf.DictConfig({})
                 if not hasattr(config.eval, 'disable_ema'):
@@ -166,12 +221,19 @@ def main(args):
                     num_classes = int(config.data.num_classes)
 
                 print(f"  Generating {args.num_samples} samples on {device}")
-                generated_images, _ = generate_samples(
-                    model_obj,
-                    args.num_samples,
-                    batch_size=model_obj.config.sampling.batch_size,
-                    num_classes=num_classes,
-                )
+                if args.use_cfg_random_category:
+                    generated_images, _ = generate_samples_with_random_cfg_categories(
+                        model_obj,
+                        args.num_samples,
+                        num_classes=num_classes,
+                    )
+                else:
+                    generated_images, _ = generate_samples(
+                        model_obj,
+                        args.num_samples,
+                        batch_size=model_obj.config.sampling.batch_size,
+                        num_classes=num_classes,
+                    )
                 generated_images = generated_images.cpu()
 
                 print(f"  Computing f_mem metric...")
@@ -233,6 +295,17 @@ if __name__ == "__main__":
     )
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size for generation (uses config default if not specified)")
     parser.add_argument("--sampling-steps", type=int, default=None, help="Number of sampling steps (uses config default if not specified)")
+    parser.add_argument(
+        "--use-cfg-random-category",
+        action="store_true",
+        help="Enable CFG and sample a fresh random class for every generated sample.",
+    )
+    parser.add_argument(
+        "--cfg-gamma",
+        type=float,
+        default=1.0,
+        help="CFG guidance strength used when --use-cfg-random-category is enabled.",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     
     args = parser.parse_args()
