@@ -399,6 +399,7 @@ def main(args):
     
     # We'll create the masked visualization after encoding to ensure consistency
     # (so the visualization matches exactly what the model sees)
+    shared_partial_tokens = None
     
     # Process each checkpoint
     print(f"\n=== Processing {len(args.checkpoints)} checkpoint(s) ===")
@@ -421,20 +422,22 @@ def main(args):
             class_name = get_class_name(label) if label < 10 else "custom"
             print(f"Using CFG guidance with class {label} ({class_name}), gamma={args.cfg_gamma}")
 
-        # Encode image with masking once (tokens are deterministic given image + tokenizer)
-        print(f"Encoding image with {args.mask_percentage}% {args.mask_type} masking...")
-        partial_tokens = encode_image_for_reconstruction(
-            original_image,
-            mask_percentage=args.mask_percentage,
-            tokenizer=model.tokenizer,
-            mask_type=args.mask_type,
-            mask_from_bottom=args.mask_from_bottom,
-        )
-        partial_tokens = partial_tokens.to(actual_device)
+        # Encode the masked input once and reuse it for all checkpoints/runs.
+        if shared_partial_tokens is None:
+            print(f"Encoding image with {args.mask_percentage}% {args.mask_type} masking...")
+            shared_partial_tokens = encode_image_for_reconstruction(
+                original_image,
+                mask_percentage=args.mask_percentage,
+                tokenizer=model.tokenizer,
+                mask_type=args.mask_type,
+                mask_from_bottom=args.mask_from_bottom,
+                debug=args.debug_encoding,
+            )
+            print(f"Token shape: {shared_partial_tokens.shape}")
+            num_masked = (shared_partial_tokens == model.tokenizer.mask_token_id).sum().item()
+            print(f"Number of masked tokens: {num_masked}/{shared_partial_tokens.numel()}")
 
-        print(f"Token shape: {partial_tokens.shape}")
-        num_masked = (partial_tokens == model.tokenizer.mask_token_id).sum().item()
-        print(f"Number of masked tokens: {num_masked}/{partial_tokens.numel()}")
+        partial_tokens = shared_partial_tokens.to(actual_device)
 
         # Run multiple reconstructions per checkpoint (different seeds)
         for run_idx in range(args.num_runs):
