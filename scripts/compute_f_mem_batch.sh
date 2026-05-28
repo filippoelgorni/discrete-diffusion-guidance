@@ -21,6 +21,7 @@ shift 2  # Remove first two args, pass remaining to Python
 echo "Config file: $CONFIG"
 echo "Output file: $OUTPUT"
 
+conda activate discdiff
 python ../compute_f_mem_batch.py "$CONFIG" --output "$OUTPUT" "$@"
 
 echo "Done. Results in $OUTPUT"

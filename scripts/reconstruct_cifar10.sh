@@ -23,6 +23,7 @@
 
 # Setup environment
 cd ../ || exit
+conda activate discdiff
 REPO_ROOT=$(pwd)
 source setup_env.sh
 export HYDRA_FULL_ERROR=1
