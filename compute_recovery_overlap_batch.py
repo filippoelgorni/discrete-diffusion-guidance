@@ -47,6 +47,7 @@ import argparse
 import csv
 import os
 import re
+import traceback
 import typing
 from pathlib import Path
 
@@ -225,17 +226,17 @@ def encode_image_with_random_mask(
     if seq_len != TOKEN_DIM:
         raise ValueError(f"Expected token sequence length {TOKEN_DIM}, got {seq_len}")
 
-    tokens_3d = tokens.view(batch_size, 3, 32, 32).clone()
+    tokens_3d = tokens.reshape(batch_size, 3, 32, 32).clone()
     n_mask = int(round(SPATIAL_PIXELS * mask_fraction))
 
     spatial_mask = torch.zeros(SPATIAL_PIXELS, dtype=torch.bool)
     if n_mask > 0:
         perm = torch.randperm(SPATIAL_PIXELS, generator=generator)
         spatial_mask[perm[:n_mask]] = True
-    spatial_mask = spatial_mask.view(32, 32)
+    spatial_mask = spatial_mask.reshape(32, 32)
 
     tokens_3d[:, :, spatial_mask] = tokenizer.mask_token_id
-    partial_tokens = tokens_3d.view(batch_size, seq_len)
+    partial_tokens = tokens_3d.reshape(batch_size, seq_len)
     return partial_tokens, spatial_mask
 
 
@@ -326,7 +327,7 @@ def safe_model_name(checkpoint_path: str) -> str:
 
 def nearest_hamming_count(generated: torch.Tensor, reference_flat_uint8: torch.Tensor, chunk_size: int) -> int:
     """Return min Hamming count over reference images."""
-    gen_flat = torch.clamp(generated, 0, 255).round().to(torch.uint8).view(1, -1)
+    gen_flat = torch.clamp(generated, 0, 255).round().to(torch.uint8).reshape(1, -1)
     best = TOKEN_DIM + 1
     for start in range(0, reference_flat_uint8.shape[0], chunk_size):
         ref_chunk = reference_flat_uint8[start:start + chunk_size]
@@ -345,7 +346,7 @@ def nearest_l2_reference_and_overlap(
     chunk_size: int,
 ) -> tuple[int, float, float]:
     """Return nearest L2 index, squared L2 distance, and cosine overlap."""
-    gen_flat = torch.clamp(generated, 0, 255).float().view(-1)
+    gen_flat = torch.clamp(generated, 0, 255).float().reshape(-1)
     gen_norm = torch.linalg.vector_norm(gen_flat)
 
     best_idx = -1
@@ -483,8 +484,8 @@ def main(args: argparse.Namespace) -> None:
 
             try:
                 reference_images, _ref_paths, _ref_labels, class_dirs = load_reference_images(reference_root)
-                reference_flat_uint8 = torch.clamp(reference_images, 0, 255).round().to(torch.uint8).view(reference_images.shape[0], -1).cpu()
-                reference_flat_float = torch.clamp(reference_images, 0, 255).float().view(reference_images.shape[0], -1).cpu()
+                reference_flat_uint8 = torch.clamp(reference_images, 0, 255).round().to(torch.uint8).reshape(reference_images.shape[0], -1).cpu()
+                reference_flat_float = torch.clamp(reference_images, 0, 255).float().reshape(reference_images.shape[0], -1).cpu()
 
                 model_obj = load_model_from_config_line(
                     checkpoint_path=checkpoint_path,
@@ -582,6 +583,7 @@ def main(args: argparse.Namespace) -> None:
 
             except Exception as e:
                 print(f"  ERROR: {e}")
+                traceback.print_exc()
                 write_error_rows(
                     writer=writer,
                     csv_file=csv_file,
