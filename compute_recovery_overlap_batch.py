@@ -1,4 +1,4 @@
-"""Batch compute recovery R(t) and overlap O(t) for CIFAR-10 reference reconstructions.
+"""Batch compute recovery, overlap, and proximity ratio for CIFAR-10 reference reconstructions.
 
 This script combines the batch model/config handling from compute_f_mem_batch.py
 with the random masking + guided reconstruction flow from reconstruct_cifar10_images.py.
@@ -29,8 +29,13 @@ At t=0, R(t) is undefined because N_mask=0, so the CSV value is NaN.
 
 where x_mu is the closest reference image in L2 sense.
 
+    proximity_ratio P(t) = ||x(t) - x_mu1||_2 / ||x(t) - x_mu2||_2
+
+where x_mu1 and x_mu2 are the closest and second-closest reference images in
+L2 sense. This is the f_mem-style nearest-neighbor ratio averaged over samples.
+
 The output is one aggregate CSV row per model and time t, with recovery and
-overlap averaged over n_samples.
+overlap/proximity_ratio averaged over n_samples.
 
 Example:
 
@@ -210,12 +215,13 @@ def encode_image_with_random_mask(
     mask_fraction: float,
     tokenizer,
     generator: torch.Generator | None = None,
+    channelwise_random_mask: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Encode image and mask a fraction of spatial positions.
+    """Encode image and mask a fraction of spatial positions or RGB tokens.
 
     Returns:
         partial_tokens: shape (1, 3072) for CIFAR-10 RGB 32x32 tokenizers.
-        spatial_mask: bool tensor of shape (32, 32), True means masked.
+        token_mask: bool tensor of shape (3, 32, 32), True means masked.
     """
     if not 0.0 <= mask_fraction <= 1.0:
         raise ValueError(f"mask_fraction must be in [0, 1], got {mask_fraction}")
@@ -227,17 +233,24 @@ def encode_image_with_random_mask(
         raise ValueError(f"Expected token sequence length {TOKEN_DIM}, got {seq_len}")
 
     tokens_3d = tokens.reshape(batch_size, 3, 32, 32).clone()
-    n_mask = int(round(SPATIAL_PIXELS * mask_fraction))
+    if channelwise_random_mask:
+        n_mask = int(round(TOKEN_DIM * mask_fraction))
+        token_mask = torch.zeros(TOKEN_DIM, dtype=torch.bool)
+        if n_mask > 0:
+            perm = torch.randperm(TOKEN_DIM, generator=generator)
+            token_mask[perm[:n_mask]] = True
+        token_mask = token_mask.reshape(3, 32, 32)
+    else:
+        n_mask = int(round(SPATIAL_PIXELS * mask_fraction))
+        spatial_mask = torch.zeros(SPATIAL_PIXELS, dtype=torch.bool)
+        if n_mask > 0:
+            perm = torch.randperm(SPATIAL_PIXELS, generator=generator)
+            spatial_mask[perm[:n_mask]] = True
+        token_mask = spatial_mask.reshape(1, 32, 32).expand(3, 32, 32).clone()
 
-    spatial_mask = torch.zeros(SPATIAL_PIXELS, dtype=torch.bool)
-    if n_mask > 0:
-        perm = torch.randperm(SPATIAL_PIXELS, generator=generator)
-        spatial_mask[perm[:n_mask]] = True
-    spatial_mask = spatial_mask.reshape(32, 32)
-
-    tokens_3d[:, :, spatial_mask] = tokenizer.mask_token_id
+    tokens_3d = tokens_3d.masked_fill(token_mask.unsqueeze(0), tokenizer.mask_token_id)
     partial_tokens = tokens_3d.reshape(batch_size, seq_len)
-    return partial_tokens, spatial_mask
+    return partial_tokens, token_mask
 
 
 def configure_eval_and_guidance(
@@ -344,25 +357,35 @@ def nearest_l2_reference_and_overlap(
     generated: torch.Tensor,
     reference_flat_float: torch.Tensor,
     chunk_size: int,
-) -> tuple[int, float, float]:
-    """Return nearest L2 index, squared L2 distance, and cosine overlap."""
+) -> tuple[int, float, float, float]:
+    """Return nearest L2 index, squared L2 distance, cosine overlap, and NN ratio."""
     gen_flat = torch.clamp(generated, 0, 255).float().reshape(-1)
     gen_norm = torch.linalg.vector_norm(gen_flat)
 
     best_idx = -1
     best_dist = float("inf")
+    second_best_dist = float("inf")
     best_ref_flat: torch.Tensor | None = None
 
     for start in range(0, reference_flat_float.shape[0], chunk_size):
         ref_chunk = reference_flat_float[start:start + chunk_size]
+        if ref_chunk.shape[0] == 0:
+            continue
         diff = ref_chunk - gen_flat.unsqueeze(0)
         distances = (diff * diff).sum(dim=1)
-        chunk_dist, chunk_pos = torch.min(distances, dim=0)
-        chunk_dist_float = float(chunk_dist.item())
-        if chunk_dist_float < best_dist:
-            best_dist = chunk_dist_float
-            best_idx = start + int(chunk_pos.item())
-            best_ref_flat = ref_chunk[int(chunk_pos.item())].clone()
+        topk_count = min(2, distances.shape[0])
+        chunk_dists, chunk_positions = torch.topk(distances, k=topk_count, largest=False)
+
+        for chunk_dist, chunk_pos in zip(chunk_dists.tolist(), chunk_positions.tolist()):
+            chunk_dist_float = float(chunk_dist)
+            global_idx = start + int(chunk_pos)
+            if chunk_dist_float < best_dist:
+                second_best_dist = best_dist
+                best_dist = chunk_dist_float
+                best_idx = global_idx
+                best_ref_flat = ref_chunk[int(chunk_pos)].clone()
+            elif chunk_dist_float < second_best_dist:
+                second_best_dist = chunk_dist_float
 
     if best_ref_flat is None or best_idx < 0:
         raise RuntimeError("Failed to find nearest L2 reference image")
@@ -374,7 +397,12 @@ def nearest_l2_reference_and_overlap(
     else:
         overlap = float(torch.dot(best_ref_flat, gen_flat).item() / denom)
 
-    return best_idx, best_dist, overlap
+    if np.isinf(second_best_dist):
+        proximity_ratio = float("nan")
+    else:
+        proximity_ratio = float(np.sqrt(best_dist) / (np.sqrt(second_best_dist) + 1e-8))
+
+    return best_idx, best_dist, overlap, proximity_ratio
 
 
 def compute_metrics_for_image(
@@ -384,21 +412,21 @@ def compute_metrics_for_image(
     reference_flat_float: torch.Tensor,
     hamming_chunk_size: int,
     l2_chunk_size: int,
-) -> tuple[float, float, int, int, float]:
-    """Compute recovery and overlap for one generated image.
+) -> tuple[float, float, float, int, int, float]:
+    """Compute recovery, overlap, and proximity ratio for one generated image.
 
-    Returns recovery, overlap, hamming_count, l2_nearest_idx, l2_distance_sq.
+    Returns recovery, overlap, proximity_ratio, hamming_count, l2_nearest_idx, l2_distance_sq.
     """
     d_ham = nearest_hamming_count(generated, reference_flat_uint8, hamming_chunk_size)
     n_mask = float(t) * TOKEN_DIM
     recovery = float("nan") if n_mask == 0.0 else 1.0 - (float(d_ham) / n_mask)
 
-    l2_idx, l2_dist_sq, overlap = nearest_l2_reference_and_overlap(
+    l2_idx, l2_dist_sq, overlap, proximity_ratio = nearest_l2_reference_and_overlap(
         generated,
         reference_flat_float,
         l2_chunk_size,
     )
-    return recovery, overlap, d_ham, l2_idx, l2_dist_sq
+    return recovery, overlap, proximity_ratio, d_ham, l2_idx, l2_dist_sq
 
 
 def write_error_rows(
@@ -420,8 +448,10 @@ def write_error_rows(
                 "t": t,
                 "recovery": "",
                 "overlap": "",
+                "proximity_ratio": "",
                 "recovery_percent": "",
                 "overlap_percent": "",
+                "proximity_ratio_percent": "",
                 "n_samples": "",
                 "sampling_steps": "",
                 "mean_hamming_count": "",
@@ -445,6 +475,10 @@ def main(args: argparse.Namespace) -> None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {args.device}")
     print(f"Times/mask fractions: {times}")
+    print(
+        "Random mask mode: "
+        f"{'channel-wise RGB tokens' if args.channelwise_random_mask else 'spatial pixels shared across RGB'}"
+    )
 
     models = parse_model_config(args.config)
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
@@ -456,8 +490,10 @@ def main(args: argparse.Namespace) -> None:
         "t",
         "recovery",
         "overlap",
+        "proximity_ratio",
         "recovery_percent",
         "overlap_percent",
+        "proximity_ratio_percent",
         "n_samples",
         "sampling_steps",
         "mean_hamming_count",
@@ -506,6 +542,7 @@ def main(args: argparse.Namespace) -> None:
                     )
                     recoveries: list[float] = []
                     overlaps: list[float] = []
+                    proximity_ratios: list[float] = []
                     hamming_counts: list[float] = []
                     l2_distances_sq: list[float] = []
 
@@ -523,6 +560,7 @@ def main(args: argparse.Namespace) -> None:
                             mask_fraction=t,
                             tokenizer=model_obj.tokenizer,
                             generator=mask_generator,
+                            channelwise_random_mask=args.channelwise_random_mask,
                         )
                         partial_tokens = partial_tokens.to(args.device)
 
@@ -535,7 +573,7 @@ def main(args: argparse.Namespace) -> None:
                                 eps=args.eps,
                             )
 
-                        recovery, overlap, d_ham, _l2_idx, l2_dist_sq = compute_metrics_for_image(
+                        recovery, overlap, proximity_ratio, d_ham, _l2_idx, l2_dist_sq = compute_metrics_for_image(
                             generated,
                             t=t,
                             reference_flat_uint8=reference_flat_uint8,
@@ -545,11 +583,13 @@ def main(args: argparse.Namespace) -> None:
                         )
                         recoveries.append(recovery)
                         overlaps.append(overlap)
+                        proximity_ratios.append(proximity_ratio)
                         hamming_counts.append(float(d_ham))
                         l2_distances_sq.append(float(l2_dist_sq))
 
                     recovery_mean = float(np.nanmean(recoveries)) if recoveries else float("nan")
                     overlap_mean = float(np.nanmean(overlaps)) if overlaps else float("nan")
+                    proximity_ratio_mean = float(np.nanmean(proximity_ratios)) if proximity_ratios else float("nan")
                     hamming_mean = float(np.nanmean(hamming_counts)) if hamming_counts else float("nan")
                     l2_mean = float(np.nanmean(l2_distances_sq)) if l2_distances_sq else float("nan")
 
@@ -560,8 +600,10 @@ def main(args: argparse.Namespace) -> None:
                         "t": t,
                         "recovery": recovery_mean,
                         "overlap": overlap_mean,
+                        "proximity_ratio": proximity_ratio_mean,
                         "recovery_percent": recovery_mean * 100.0 if not np.isnan(recovery_mean) else "",
                         "overlap_percent": overlap_mean * 100.0 if not np.isnan(overlap_mean) else "",
+                        "proximity_ratio_percent": proximity_ratio_mean * 100.0 if not np.isnan(proximity_ratio_mean) else "",
                         "n_samples": args.n_samples,
                         "sampling_steps": steps,
                         "mean_hamming_count": hamming_mean,
@@ -574,7 +616,8 @@ def main(args: argparse.Namespace) -> None:
 
                     print(
                         f"  t={t:g}: recovery={recovery_mean:.6g}, "
-                        f"overlap={overlap_mean:.6g}, steps={steps}"
+                        f"overlap={overlap_mean:.6g}, "
+                        f"proximity_ratio={proximity_ratio_mean:.6g}, steps={steps}"
                     )
 
                 del model_obj
@@ -599,7 +642,9 @@ def main(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Batch compute recovery and overlap for CIFAR-10 reference reconstructions.")
+    parser = argparse.ArgumentParser(
+        description="Batch compute recovery, overlap, and proximity ratio for CIFAR-10 reference reconstructions."
+    )
     parser.add_argument(
         "config",
         type=str,
@@ -669,6 +714,11 @@ if __name__ == "__main__":
         "--reconstruct-t-zero",
         action="store_true",
         help="At t=0, call model.reconstruct with one sampling step instead of copying the original. Recovery is still NaN because N_mask=0.",
+    )
+    parser.add_argument(
+        "--channelwise-random-mask",
+        action="store_true",
+        help="Sample random masks over individual RGB tokens instead of whole spatial pixels shared across channels.",
     )
 
     args = parser.parse_args()

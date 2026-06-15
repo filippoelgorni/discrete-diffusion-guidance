@@ -18,6 +18,9 @@
 # Example:
 #   sbatch compute_recovery_overlap_batch.sh f_mem_models_100000.txt recovery_overlap_results.csv \
 #       --n-samples 1000 --times 0.0:0.1:1.0 --cfg-gamma 1.0
+#
+# Add --channelwise-random-mask to mask individual RGB entries instead of whole
+# spatial pixels shared across RGB channels.
 
 CONFIG=${1:-f_mem_models_100000.txt}
 OUTPUT=${2:-recovery_overlap_results.csv}
